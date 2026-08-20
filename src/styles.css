@@ -1,0 +1,388 @@
+/* App styling on top of the design system. Anything here is pianoify's, not
+   the system's — tokens and component classes live in ds/classical.css. */
+
+:root {
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace;
+  /* The checkerboard behind the roll frame. Tied to the text colour so it
+     stays a shadow of the ink rather than a fixed grey. */
+  --dither: color-mix(in srgb, var(--color-text) 26%, transparent);
+  --muted: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+a:hover {
+  color: var(--color-accent-700);
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+/* The app is one non-scrolling screen: the roll is the thing that moves. */
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+/* — status strip — */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px var(--space-6);
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-neutral-100);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+.strip-kicker {
+  color: var(--color-accent-700);
+}
+.strip-spacer {
+  flex: 1;
+}
+
+/* — header — */
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-6);
+  padding: var(--space-4) var(--space-6) var(--space-3);
+}
+.head h1 {
+  font-size: 30px;
+  font-weight: 400;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+.head-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-divider);
+  padding-bottom: 3px;
+}
+.head-title > .name {
+  font-family: var(--font-heading);
+  font-size: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.head-title > .meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  white-space: nowrap;
+}
+
+/* A select and a file-input label styled to sit on the same baseline as the
+   mono readouts around them. */
+.picker {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--color-text);
+  background: var(--color-neutral-100);
+  border: 1px solid var(--color-neutral-500);
+  border-radius: var(--radius-sm);
+  padding: 4px var(--space-2);
+  cursor: pointer;
+}
+.picker:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.file-btn {
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.file-btn input {
+  display: none;
+}
+
+/* — the framed roll — */
+.stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  padding: 0 var(--space-6) var(--space-6);
+  display: flex;
+}
+/* Offset a few pixels down and right of the frame, so the frame reads as a
+   plate sitting on a printed ground. */
+.stage-dither {
+  position: absolute;
+  left: calc(var(--space-6) + 7px);
+  right: calc(var(--space-6) - 7px);
+  top: 7px;
+  bottom: calc(var(--space-6) - 7px);
+  background-image: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    var(--dither) 0deg 90deg,
+    transparent 90deg 180deg
+  );
+  background-size: 4px 4px;
+  pointer-events: none;
+}
+.frame {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-neutral-500);
+  background: var(--color-bg);
+}
+
+.rail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-2);
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-neutral-100);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.rail-spacer {
+  flex: 1;
+}
+.rail-chord {
+  color: var(--color-accent-700);
+  font-variant-numeric: tabular-nums;
+}
+
+.roll {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(var(--color-neutral-100), var(--color-bg));
+}
+/* The layer that moves. Everything inside is positioned from `bottom`, so time
+   runs upward and the notes fall toward the playhead at the bottom edge. */
+.roll-scroll {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+.roll-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 90px;
+  background: linear-gradient(var(--color-neutral-100), transparent);
+  pointer-events: none;
+}
+.roll-playhead {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--color-accent);
+  opacity: 0.75;
+}
+
+/* — chord bands — */
+.chord-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--color-accent-2) 45%, transparent);
+  cursor: pointer;
+}
+.chord-label {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-accent-2-700);
+  border: 1px solid color-mix(in srgb, var(--color-accent-2) 35%, transparent);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.chord-line[data-off="1"] {
+  opacity: 0.4;
+}
+
+/* — busy overlay — */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
+}
+.overlay-card {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-neutral-500);
+  background: var(--color-bg);
+  text-align: center;
+  max-width: 70%;
+}
+.overlay-bar {
+  height: 2px;
+  margin-top: var(--space-2);
+  background: var(--color-neutral-300);
+}
+.overlay-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 240ms linear;
+}
+
+/* — keyboard — */
+.keys {
+  position: relative;
+  height: 104px;
+  border-top: 1px solid var(--color-neutral-500);
+  background: var(--color-neutral-200);
+}
+.key-white {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--color-neutral-100);
+  border-right: 1px solid var(--color-divider);
+  cursor: pointer;
+}
+.key-black {
+  position: absolute;
+  top: 0;
+  height: 62%;
+  background: var(--color-neutral-900);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  z-index: 2;
+  cursor: pointer;
+}
+.key-white[data-lit="1"] {
+  background: var(--color-accent-200);
+}
+.key-black[data-lit="1"] {
+  background: var(--color-accent-600);
+}
+/* The chord pad marks its keys along the front edge instead of filling them.
+   The two accent ramps in this system are all but the same colour, so hue
+   cannot carry the difference — but a note *sounding* and a harmony *being
+   held under it* are different things, and the eye reads a fill against a bar
+   without being told which is which. A key doing both shows both. */
+.key-white[data-lit="2"],
+.key-white[data-lit="1"][data-chord="1"] {
+  box-shadow: inset 0 -9px 0 var(--color-accent-2-400);
+}
+.key-black[data-lit="2"],
+.key-black[data-lit="1"][data-chord="1"] {
+  box-shadow: inset 0 -7px 0 var(--color-accent-2-300);
+}
+.octave-mark {
+  position: absolute;
+  bottom: 6px;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  pointer-events: none;
+}
+
+/* — footer — */
+.foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-6) var(--space-4);
+}
+.foot .mono {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.foot-spacer {
+  flex: 1;
+}
+.foot-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--color-divider);
+}
+.mix {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.mix input {
+  width: 132px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+.mix-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 54px;
+  color: var(--color-accent-700);
+}
+.transport {
+  min-width: 96px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.link-btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+/* The chords toggle reads as pressed when the pad is sounding, in the second
+   accent so it is tied to the bands drawn in the roll. */
+.chip-on {
+  color: var(--color-accent-2-800);
+  border-color: var(--color-accent-2);
+  background: color-mix(in srgb, var(--color-accent-2) 14%, transparent);
+}
+
+/* — drop target — */
+.drop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  border: 2px dashed var(--color-accent);
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--color-accent-700);
+}
