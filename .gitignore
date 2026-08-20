@@ -1,0 +1,9 @@
+node_modules
+dist
+.env.local
+.vercel
+*.log
+
+# Reference checkout of the muscriptor backend, kept alongside for its API
+# source and its web client. It carries its own .git — not part of this repo.
+muscriptor-fork/
