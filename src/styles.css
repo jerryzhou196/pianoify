@@ -834,10 +834,52 @@ input::placeholder {
 
 .trim-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
+}
+
+.trim-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Held at the width of "Play selection", the longer of the two labels, so that
+   switching to "Stop" mid-playback does not shrink the button and drag the
+   caption beside it sideways. Measured at 126.6px in the mono face; the 2px of
+   slack absorbs rounding on other platforms. */
+.trim-head .preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 22px;
+  min-width: 128px;
+  padding: 0 10px;
+  flex: none;
+  border: 1px solid var(--edge-mid);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.trim-head .preview:hover {
+  border-color: var(--edge-strong);
+  color: var(--ink);
+}
+
+.trim-head .preview .glyph {
+  font-size: 8px;
+  color: var(--ink);
 }
 
 .trim-head .caption {
@@ -848,6 +890,7 @@ input::placeholder {
 }
 
 .trim-head .readout {
+  flex: none;
   font-family: var(--mono);
   font-size: 9.5px;
   color: #8a8a8a;
@@ -859,8 +902,12 @@ input::placeholder {
   height: 84px;
 }
 
+/* Only the slidable wave claims the gesture: when the whole file already fits
+   the window there is nothing to drag, and swallowing the swipe would just
+   leave a dead strip the page will not scroll past. */
 .wave[data-slidable="1"] {
   cursor: grab;
+  touch-action: none;
 }
 
 .wave[data-slidable="1"]:active {
@@ -914,30 +961,6 @@ input::placeholder {
   opacity: 0;
   pointer-events: none;
   z-index: 6;
-}
-
-.wave-play {
-  position: absolute;
-  top: 50%;
-  width: 30px;
-  height: 30px;
-  margin: -15px 0 0 -15px;
-  border: none;
-  border-radius: 50%;
-  background: var(--ink);
-  color: #000000;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.75);
-  z-index: 7;
-}
-
-.wave-play:hover {
-  background: var(--ink-soft);
 }
 
 .modal-foot {
@@ -1023,6 +1046,17 @@ input::placeholder {
   color: var(--ink-soft);
   letter-spacing: 0.06em;
   white-space: nowrap;
+}
+
+/* On a phone the trim head has room for the button and the caption telling you
+   what to do with it, and not for the timecode as well. The readout is the
+   line to drop: the window it counts is drawn right below it, and the length
+   never changes — it is always the full clip — so the digits repeat what the
+   caption already said. */
+@media (max-width: 760px) {
+  .trim-head .readout {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
