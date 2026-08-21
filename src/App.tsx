@@ -11,7 +11,15 @@ import { cropBuffer, cropSeconds, cropToWav, type Crop, type Source } from "./au
 import { analyzeChords, chordAt, warmChordService } from "./chords";
 import { Engine } from "./engine";
 import { assignFingers, assignHands } from "./hands";
-import { MireloError, modeLabel, transcribe, type Stage, type TimingMode } from "./mirelo";
+import { transcribe as transcribeWithMirelo } from "./mirelo";
+import {
+  DEFAULT_MODEL,
+  TranscribeError,
+  modelById,
+  type ModelId,
+  type Stage,
+} from "./models";
+import { transcribe as transcribeOnGpu } from "./muscriptor";
 import { clock, isBlack, noteColor } from "./roll";
 import type { BeatGrid, Chord, Note, Timing } from "./types";
 
@@ -29,7 +37,7 @@ export default function App() {
   const [musicxmlUrl, setMusicxmlUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>("bach · prelude in c");
 
-  const [mode, setMode] = useState<TimingMode>("performance");
+  const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
   const [view, setView] = useState<"roll" | "sheet">("roll");
   const [modalOpen, setModalOpen] = useState(true);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -66,6 +74,14 @@ export default function App() {
     engine.pause();
     setPlaying(false);
   }, [engine, modalOpen]);
+
+  // The box hands back its MIDI in the stream rather than behind a link, so
+  // that export is an object URL made here. It is revoked when the next
+  // transcription replaces it, which Mirelo's presigned links do not need.
+  useEffect(() => {
+    if (!midiUrl?.startsWith("blob:")) return;
+    return () => URL.revokeObjectURL(midiUrl);
+  }, [midiUrl]);
 
   // The roll fades out as the crossfade moves toward the recording, so what you
   // are hearing and what you are looking at agree. One write on the layer
@@ -227,21 +243,27 @@ export default function App() {
             .catch(() => null)
         : Promise.resolve(null);
 
+      const picked = modelById(model);
       try {
-        const result = await transcribe(
-          file,
-          mode,
-          {
-            onStage: (s) => !stale() && setStage(stageText(s)),
-            onProgress: (fraction) => {
-              if (stale() || fraction === null) return;
-              setStage((current) => `${current.split(" · ")[0]} · ${Math.round(fraction * 100)}%`);
-            },
-            // Notes decoded so far, drawn while the model is still working.
-            onNotes: (partial) => !stale() && setNotes(partial),
+        const handlers = {
+          onStage: (s: Stage, detail?: string) =>
+            !stale() && setStage(stageText(s, picked.service, detail)),
+          onProgress: (fraction: number | null) => {
+            if (stale() || fraction === null) return;
+            setStage((current) => `${current.split(" · ")[0]} · ${Math.round(fraction * 100)}%`);
           },
-          controller.signal,
-        );
+          // Notes decoded so far, drawn while the model is still working.
+          onNotes: (partial: Note[]) => !stale() && setNotes(partial),
+        };
+        const result =
+          picked.backend === "muscriptor"
+            ? await transcribeOnGpu(file, handlers, controller.signal)
+            : await transcribeWithMirelo(
+                file,
+                picked.timing ?? "performance",
+                handlers,
+                controller.signal,
+              );
         if (stale()) return;
 
         setNotes(result.notes);
@@ -280,13 +302,13 @@ export default function App() {
         }
         setPhase("error");
         setError(
-          e instanceof MireloError
+          e instanceof TranscribeError
             ? e.message
             : `could not reach the transcriber — ${e instanceof Error ? e.message : "unknown error"}`,
         );
       }
     },
-    [engine, mode],
+    [engine, model],
   );
 
   const cancel = useCallback(() => {
@@ -319,8 +341,8 @@ export default function App() {
   return (
     <div className="app">
       <TopBar
-        mode={mode}
-        onMode={setMode}
+        model={model}
+        onModel={setModel}
         view={view}
         onView={setView}
         fileName={fileName}
@@ -381,7 +403,8 @@ export default function App() {
       {modalOpen && (
         <UploadModal
           onStart={(source, crop) => void start(source, crop)}
-          modeLabel={modeLabel(mode)}
+          model={model}
+          onModel={setModel}
         />
       )}
 
@@ -403,17 +426,22 @@ function useEngine(): Engine {
   return engine;
 }
 
-function stageText(stage: Stage): string {
-  switch (stage) {
-    case "uploading":
-      return "uploading the clip";
-    case "queued":
-      return "queued at mirelo";
-    case "transcribing":
-      return "transcribing";
-    case "engraving":
-      return "engraving";
-  }
+/** What the overlay says, named for whichever backend is working. `detail` is
+ *  the queue position when there is one, which only the box reports. */
+function stageText(stage: Stage, service: string, detail?: string): string {
+  const head = (() => {
+    switch (stage) {
+      case "uploading":
+        return "uploading the clip";
+      case "queued":
+        return `queued at ${service}`;
+      case "transcribing":
+        return "transcribing";
+      case "engraving":
+        return "engraving";
+    }
+  })();
+  return detail ? `${head} · ${detail}` : head;
 }
 
 /** Light or clear one key. The unlit colour is the key's own, which is the
