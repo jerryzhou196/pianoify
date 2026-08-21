@@ -13,7 +13,7 @@
  * type, and a hard byte ceiling.
  */
 import { lookup } from "node:dns/promises";
-import { ApiError, json, query, route } from "./_mirelo.js";
+import { ApiError, json, query, route, throttle } from "./_mirelo.js";
 
 const MAX_BYTES = 60 * 1024 * 1024;
 const MAX_REDIRECTS = 4;
@@ -69,6 +69,9 @@ export const config = { maxDuration: 300 };
 
 export default route({
   GET: async (req, res) => {
+    // Not billed, but a 60MB proxy is still a bill — function time and
+    // bandwidth. A few pastes a minute is the real use; a loop is not.
+    throttle(req, "fetch", 8, 60_000);
     const raw = query(req).get("url") ?? "";
     let target: URL;
     try {
