@@ -265,6 +265,27 @@ export function UploadModal({
           )}
         </div>
 
+        <div className="url">
+          <span className="tag">YT</span>
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void fromUrl();
+            }}
+            placeholder="Paste a YouTube link, or a direct link to an audio file"
+          />
+          <button onClick={() => void fromUrl()} disabled={!url.trim() || reading !== null}>
+            Fetch
+          </button>
+        </div>
+
+        <div className="or">
+          <div className="rule" />
+          <span>OR</span>
+          <div className="rule" />
+        </div>
+
         <label
           className="drop"
           data-hot={hot ? 1 : 0}
@@ -297,27 +318,6 @@ export function UploadModal({
             }}
           />
         </label>
-
-        <div className="or">
-          <div className="rule" />
-          <span>OR</span>
-          <div className="rule" />
-        </div>
-
-        <div className="url">
-          <span className="tag">YT</span>
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void fromUrl();
-            }}
-            placeholder="Paste a YouTube link, or a direct link to an audio file"
-          />
-          <button onClick={() => void fromUrl()} disabled={!url.trim() || reading !== null}>
-            Fetch
-          </button>
-        </div>
 
         {error && <div className="modal-error">{error}</div>}
 
