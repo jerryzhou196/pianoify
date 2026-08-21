@@ -18,6 +18,37 @@ import { useEffect, useRef, useState } from "react";
  * The engraver is loaded on demand. It is about a megabyte of vendor code and
  * most sessions never open this tab.
  */
+
+/**
+ * Centre what was actually engraved on the page.
+ *
+ * OSMD draws systems from the left of a page as wide as the element it was
+ * given, so a score that does not fill that width — a short clip, or a single
+ * system — sits against the left edge with all of the leftover width dumped on
+ * the right. No engraving rule turns this off, and the systems are laid out
+ * inside the SVG rather than as elements CSS could reach, so the page itself is
+ * cropped to its contents afterwards and the auto margins in the stylesheet do
+ * the rest.
+ *
+ * The viewBox is where OSMD keeps the zoom: user units in, pixels out. So the
+ * crop is measured in viewBox units and the width attribute, which is pixels,
+ * has to be scaled back down by the same factor or the score is redrawn at
+ * 1:1 — bigger than it was asked to be, and clipped by its own height.
+ */
+function centre(host: HTMLElement): void {
+  for (const svg of Array.from(host.querySelectorAll("svg"))) {
+    const page = svg.getAttribute("viewBox")?.split(/[\s,]+/).map(Number);
+    const width = Number.parseFloat(svg.getAttribute("width") ?? "");
+    if (!page || page.length !== 4 || !(page[2] > 0) || !(width > 0)) continue;
+    const drawn = svg.getBBox();
+    // The score fills the page: there is nothing to centre, and cropping would
+    // only shave off the right margin the engraving is entitled to.
+    if (!(drawn.width > 0) || drawn.width >= page[2]) continue;
+    svg.setAttribute("viewBox", `${drawn.x} ${page[1]} ${drawn.width} ${page[3]}`);
+    svg.setAttribute("width", String(drawn.width * (width / page[2])));
+  }
+}
+
 export function Sheet({
   musicxmlUrl,
   caption,
@@ -57,7 +88,10 @@ export function Sheet({
         if (cancelled || !paper.current) return;
 
         setStatus("engraving…");
-        const osmd = new OpenSheetMusicDisplay(paper.current, {
+        // The engraver measures the element it is handed and draws that wide,
+        // so it is handed one with no padding of its own — see the stylesheet.
+        const host = paper.current;
+        const osmd = new OpenSheetMusicDisplay(host, {
           backend: "svg",
           drawTitle: false,
           drawPartNames: false,
@@ -69,6 +103,18 @@ export function Sheet({
         await osmd.load(xml);
         if (cancelled) return;
         osmd.zoom = 0.72;
+
+        // Centre after every engraving, not just this one. OSMD re-renders on
+        // its own when the window changes size — that reflow is the point of
+        // engraving in the browser rather than showing MuseScore's PDF — and it
+        // calls `render` to do it, so wrapping the method is what catches those
+        // too. A re-render that skipped the centring would drop the score back
+        // against the left edge and stay there.
+        const engrave = osmd.render.bind(osmd);
+        osmd.render = () => {
+          engrave();
+          centre(host);
+        };
         osmd.render();
         if (!cancelled) setStatus(caption);
       } catch (e) {
@@ -93,7 +139,9 @@ export function Sheet({
         <span>{status}</span>
       </div>
       {musicxmlUrl ? (
-        <div className="sheet-paper" ref={paper} />
+        <div className="sheet-paper">
+          <div className="sheet-engraving" ref={paper} />
+        </div>
       ) : (
         <div className="sheet-waiting">{notice}</div>
       )}
