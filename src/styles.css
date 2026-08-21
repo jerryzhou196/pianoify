@@ -470,7 +470,9 @@ input::placeholder {
    system 32px wider than the space it had, and the right-hand end of the score
    spilled past the edge of the page and was clipped. */
 .sheet-engraving {
-  min-height: 78px;
+  /* Only ever seen for the instant between the paper appearing and the first
+     engraving landing on it; roughly one grand staff at `SCALE`. */
+  min-height: 101px;
 }
 
 /* `centre` in `Sheet.tsx` crops the page to what was engraved on it; these put
