@@ -49,8 +49,8 @@ that a static site normally doesn't:
 audio file
    ↓  clip.ts        decode, score every 15s window, keep the most musical one,
    ↓                 re-encode it as mono 16-bit WAV
-   ├─ POST /transcribe  (GPU, SSE)     → notes streamed as start/end pairs,
-   │                                     then a beat grid and a chord track
+   ├─ POST /transcribe  (GPU, SSE)     → piano notes streamed as start/end
+   │     instruments=acoustic_piano       pairs, then a beat grid and chords
    └─ POST /analyze     (HF Space)     → the same chords, from a service that
                                          also ran its own beat tracking
    ↓  engine.ts       schedule both onto a synthesized piano
@@ -69,6 +69,18 @@ the window by counting frames above a file-relative noise floor, so it lands on
 the part with the most playing in it rather than the loudest transient — and it
 refuses a file that is silent end to end instead of spending GPU time
 confirming it.
+
+### Asking for piano
+
+`instruments` on `/transcribe` is a hard constraint — the server masks out
+every program and drum token outside the listed groups during generation — and
+it matters more than it looks. Unset, the model decodes whatever it hears: on a
+pop track, 265 notes of which 140 were **drums**. A drum event's `pitch` is a
+kit number (36 kick, 38 snare, 42 hi-hat), so playing that stream on a piano
+means playing the General MIDI drum map as pitches, which is where the
+low-register mud came from. Asking for `acoustic_piano` returns the model's
+piano reduction instead — 123 notes, all piano, and ~20% faster for having
+fewer tokens to choose between.
 
 ### The pedal
 
