@@ -10,6 +10,8 @@ import {
 } from "../audio";
 import { LinkError, fetchLink, isYouTube } from "../links";
 import { quote } from "../mirelo";
+import { ModelPicker } from "./ModelPicker";
+import { modelById, type ModelId } from "../models";
 import { clock } from "../roll";
 
 /**
@@ -28,10 +30,12 @@ import { clock } from "../roll";
  */
 export function UploadModal({
   onStart,
-  modeLabel,
+  model,
+  onModel,
 }: {
   onStart: (source: Source, crop: Crop) => void;
-  modeLabel: string;
+  model: ModelId;
+  onModel: (model: ModelId) => void;
 }) {
   const [source, setSource] = useState<Source | null>(null);
   const [crop, setCrop] = useState<Crop>({ a: 0, b: 1 });
@@ -57,7 +61,7 @@ export function UploadModal({
   const cropRef = useRef(crop);
   cropRef.current = crop;
 
-  /* ── loading ───────────────────────────────────────────────────────────── */
+  /* ── loading ──────────────────────────────────────────────────────────────── */
 
   const load = useCallback(async (file: File) => {
     setError(null);
@@ -132,36 +136,47 @@ export function UploadModal({
     [span],
   );
 
-  // Pointer events, not mouse ones: the same handler then serves a finger, and
-  // this drag is the whole point of the panel — on a touch screen the mouse
-  // version left the window nailed wherever `suggestCrop` put it.
   useEffect(() => {
-    const move = (e: PointerEvent) => {
+    const move = (x: number) => {
       const offset = grab.current;
       const rect = wave.current?.getBoundingClientRect();
       if (offset === null || !rect) return;
-      moveTo((e.clientX - rect.left) / rect.width - offset);
+      moveTo((x - rect.left) / rect.width - offset);
+    };
+    const onMouse = (e: MouseEvent) => move(e.clientX);
+    // A finger on the waveform slides the window instead of scrolling the page
+    // behind it. touch-action on the slidable wave claims the gesture up front,
+    // and preventDefault here keeps a drag that wanders off the strip from
+    // being handed back to the page as a scroll halfway through.
+    const onTouch = (e: TouchEvent) => {
+      if (grab.current === null) return;
+      e.preventDefault();
+      move(e.touches[0].clientX);
     };
     const up = () => {
       grab.current = null;
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
+    window.addEventListener("mousemove", onMouse);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("touchmove", onTouch, { passive: false });
+    window.addEventListener("touchend", up);
+    window.addEventListener("touchcancel", up);
     return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("mousemove", onMouse);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("touchmove", onTouch);
+      window.removeEventListener("touchend", up);
+      window.removeEventListener("touchcancel", up);
     };
   }, [moveTo]);
 
   /** Grab the window wherever it was pressed; pressing outside it centres it on
-   *  the pointer first, so a tap at the far end of a long file still gets you
+   *  the pointer first, so a press at the far end of a long file still gets you
    *  there in one gesture. */
-  const startDrag = (e: React.PointerEvent) => {
+  const startAt = (clientX: number) => {
     const rect = wave.current?.getBoundingClientRect();
     if (!rect || !slidable) return;
-    const at = (e.clientX - rect.left) / rect.width;
+    const at = (clientX - rect.left) / rect.width;
     const { a } = cropRef.current;
     if (at >= a && at <= a + span) {
       grab.current = at - a;
@@ -171,7 +186,10 @@ export function UploadModal({
     }
   };
 
-  /* ── the preview ───────────────────────────────────────────────────────── */
+  const startDrag = (e: React.MouseEvent) => startAt(e.clientX);
+  const startTouch = (e: React.TouchEvent) => startAt(e.touches[0].clientX);
+
+  /* ── the preview ────────────────────────────────────────────────────────── */
 
   // The playhead is written straight to the DOM, for the same reason the roll's
   // is: it moves every frame and nothing else in this panel does. The same loop
@@ -197,8 +215,7 @@ export function UploadModal({
     return () => cancelAnimationFrame(raf);
   }, [source]);
 
-  const togglePreview = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const togglePreview = () => {
     const el = audio.current;
     if (!el || !source) return;
     if (!el.paused) {
@@ -206,12 +223,12 @@ export function UploadModal({
       setPlaying(false);
       return;
     }
-    const from = crop.a * source.duration;
-    // Restart from the top of the window unless the preview was paused inside
-    // it, where carrying on is what you meant.
-    if (el.currentTime < from || el.currentTime >= crop.b * source.duration) {
-      el.currentTime = from;
-    }
+    // Always from the top of the window, never resuming where a pause left off.
+    // The button means "hear the clip I am about to send", and that only holds
+    // if every press plays the same thing: nudge the window a second later,
+    // press again, and what you hear is the comparison you asked for rather
+    // than whatever tail of the old position happened to be left over.
+    el.currentTime = crop.a * source.duration;
     void el
       .play()
       .then(() => setPlaying(true))
@@ -221,16 +238,19 @@ export function UploadModal({
       });
   };
 
-  /* ── the quote ─────────────────────────────────────────────────────────── */
+  /* ── the quote ────────────────────────────────────────────────────────── */
 
   const window_ = source ? cropSeconds(source, crop) : null;
   const seconds = window_ ? window_.end - window_.start : 0;
 
+  // Only Mirelo has a price to quote — the box is rented by the hour, so a clip
+  // on it costs nothing extra and there is nothing to ask before sending it.
+  //
   // Re-quoted as the window settles. Debounced, because a drag would otherwise
   // fire a request per frame, and abandoned on the way out so a stale answer
   // cannot land on a newer window.
   useEffect(() => {
-    if (!source || seconds <= 0) {
+    if (!modelById(model).billed || !source || seconds <= 0) {
       setPrice(null);
       return;
     }
@@ -242,18 +262,30 @@ export function UploadModal({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [source, seconds]);
+  }, [model, source, seconds]);
 
-  /* ── render ────────────────────────────────────────────────────────────── */
+  /* ── render ──────────────────────────────────────────────────────────── */
 
   const left = crop.a * 100;
   const right = crop.b * 100;
+  const picked = modelById(model);
+  // What this clip will cost. Null while an answer is still on its way — the
+  // line simply has one fewer thing in it until it lands.
+  const cost = !picked.billed
+    ? "no credits"
+    : price?.credits != null
+      ? `${price.credits} credits`
+      : null;
 
   return (
     <div className="scrim">
       <div className="modal">
         <div className="modal-head">
           <span className="title">New transcription</span>
+          {/* Which model, chosen before the file rather than after it: the
+              header's copy of this picker is behind the scrim, and out of
+              reach until something has already been transcribed. */}
+          <ModelPicker model={model} onModel={onModel} />
         </div>
 
         <div className="url">
@@ -316,11 +348,21 @@ export function UploadModal({
           <>
             <div className="trim">
               <div className="trim-head">
-                <span className="caption">
-                  {slidable
-                    ? `DRAG THE ${MAX_CLIP_SECONDS}s WINDOW — PLAY TO HEAR IT`
-                    : `WHOLE FILE — UNDER ${MAX_CLIP_SECONDS}s`}
-                </span>
+                <div className="trim-head-left">
+                  <button
+                    className="preview"
+                    onClick={togglePreview}
+                    title={playing ? "stop the preview" : "preview these seconds"}
+                  >
+                    <span className="glyph">{playing ? "❚❚" : "▶"}</span>
+                    {playing ? "Stop" : "Play selection"}
+                  </button>
+                  <span className="caption">
+                    {slidable
+                      ? `DRAG THE ${MAX_CLIP_SECONDS}s WINDOW`
+                      : `WHOLE FILE — UNDER ${MAX_CLIP_SECONDS}s`}
+                  </span>
+                </div>
                 <span className="readout">
                   {clock(window_.start)} → {clock(window_.end)} ({seconds.toFixed(1)}s)
                 </span>
@@ -330,7 +372,8 @@ export function UploadModal({
                 className="wave"
                 ref={wave}
                 data-slidable={slidable ? 1 : 0}
-                onPointerDown={startDrag}
+                onMouseDown={startDrag}
+                onTouchStart={startTouch}
               >
                 <div className="wave-bars">
                   {Array.from(source.peaks).map((amp, i) => {
@@ -347,23 +390,14 @@ export function UploadModal({
                 <div className="wave-mask left" style={{ width: `${left}%` }} />
                 <div className="wave-mask right" style={{ width: `${100 - right}%` }} />
                 <div className="wave-head" ref={head} />
-                <button
-                  className="wave-play"
-                  style={{ left: `${(left + right) / 2}%` }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={togglePreview}
-                  title={playing ? "stop the preview" : "preview these seconds"}
-                >
-                  {playing ? "❚❚" : "▶"}
-                </button>
               </div>
             </div>
 
             <div className="modal-foot">
               <span className="quote">
                 {[
-                  modeLabel,
-                  price?.credits != null ? `${price.credits} credits` : null,
+                  picked.name,
+                  cost,
                   price?.estimated_ms != null
                     ? `about ${Math.max(1, Math.round(price.estimated_ms / 1000))}s`
                     : null,

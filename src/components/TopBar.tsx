@@ -1,60 +1,61 @@
-import { useEffect, useRef, useState } from "react";
-import { TIMING_MODES, type TimingMode } from "../mirelo";
+import { useState } from "react";
+import { ModelPicker } from "./ModelPicker";
+import type { ModelId } from "../models";
 
 /**
- * The header: which mode transcribed this, which way of looking at it is open,
- * what was transcribed, and the two exports.
+ * The header: which model transcribes, which way of looking at the result is
+ * open, what was transcribed, and the two exports.
  *
- * The exports hand over Mirelo's own renderings rather than anything built
- * here. The same transcription is returned as MIDI and as MusicXML behind
- * presigned links, so "export" is a fetch and a save — and what lands in a
- * notation editor is what the transcriber actually decoded, not this app's
- * re-derivation of it.
+ * The exports hand over the transcriber's own renderings rather than anything
+ * built here, so what lands in a notation editor is what was actually decoded
+ * and not this app's re-derivation of it. Mirelo returns both MIDI and
+ * MusicXML behind presigned links; the GPU box hands its MIDI over with the
+ * notes and its MusicXML a few seconds later, once MuseScore has engraved it.
+ * Which is why the sheet-music tab opens on a waiting line rather than staying
+ * shut: the wait is the honest state, and it is a short one.
  */
 export function TopBar({
-  mode,
-  onMode,
+  model,
+  onModel,
   view,
   onView,
   fileName,
   onReplace,
   midiUrl,
   musicxmlUrl,
+  engraving,
 }: {
-  mode: TimingMode;
-  onMode: (mode: TimingMode) => void;
+  model: ModelId;
+  onModel: (model: ModelId) => void;
   view: "roll" | "sheet";
   onView: (view: "roll" | "sheet") => void;
   fileName: string | null;
   onReplace: () => void;
   midiUrl: string | null;
   musicxmlUrl: string | null;
+  /** Where the MusicXML is, when it is written after the notes rather than
+   *  with them. See `engraving` in `App.tsx`. */
+  engraving: "idle" | "running" | "failed";
 }) {
-  const [open, setOpen] = useState(false);
-  const picker = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState<string | null>(null);
 
-  // Close the menu on anything that is not the menu — a click elsewhere or
-  // Escape. Without this it survives a click on the roll behind it.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (!picker.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("pointerdown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  /** Why a MusicXML-shaped control is dead, when it is. The box engraves in a
+   *  second pass after the notes, so for a few seconds the answer is "not yet"
+   *  rather than "not at all", and sometimes it is "it could not". */
+  const noXml =
+    engraving === "running"
+      ? "engraving — a few seconds"
+      : engraving === "failed"
+        ? "the box could not engrave this one"
+        : "transcribe something first";
 
-  const current = TIMING_MODES.find((m) => m.id === mode) ?? TIMING_MODES[0];
+  /** The tab opens on anything the sheet-music panel can say for itself —
+   *  a page, a wait, or the reason there will not be one. It is shut only when
+   *  there is nothing to tell. */
+  const sheetOpens = musicxmlUrl !== null || engraving !== "idle";
 
-  /** Save one of Mirelo's files under a name that means something.
+  /** Save one of the transcription's own files under a name that means
+   *  something.
    *
    *  Fetched into a blob rather than linked to directly: the presigned URL ends
    *  in `transcription.mid` for every transcription anyone has ever run, and a
@@ -85,40 +86,7 @@ export function TopBar({
 
   return (
     <header className="bar">
-      <div className="picker" ref={picker}>
-        <button
-          className="chip"
-          onClick={() => setOpen((v) => !v)}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-        >
-          <span className="dot" />
-          <span className="label">{current.name}</span>
-          <span className="caret">▾</span>
-        </button>
-        {open && (
-          <div className="picker-menu" role="listbox">
-            {TIMING_MODES.map((m) => (
-              <button
-                key={m.id}
-                className="picker-option"
-                role="option"
-                aria-selected={m.id === mode}
-                onClick={() => {
-                  onMode(m.id);
-                  setOpen(false);
-                }}
-              >
-                <span className="head">
-                  <span className="name">{m.name}</span>
-                  <span className="tag">{m.tag}</span>
-                </span>
-                <span className="note">{m.note}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <ModelPicker model={model} onModel={onModel} />
 
       <div className="tabs" role="tablist">
         <button
@@ -134,8 +102,8 @@ export function TopBar({
           role="tab"
           aria-selected={view === "sheet"}
           onClick={() => onView("sheet")}
-          disabled={!musicxmlUrl}
-          title={musicxmlUrl ? undefined : "transcribe something first"}
+          disabled={!sheetOpens}
+          title={sheetOpens ? undefined : noXml}
         >
           Sheet music
         </button>
@@ -151,6 +119,7 @@ export function TopBar({
       <button
         className="action"
         disabled={!musicxmlUrl || saving !== null}
+        title={musicxmlUrl ? undefined : noXml}
         onClick={() => musicxmlUrl && void save(musicxmlUrl, "musicxml")}
       >
         {saving === "musicxml" ? "Saving…" : "Export MusicXML"}
