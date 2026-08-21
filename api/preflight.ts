@@ -6,7 +6,7 @@
  * the trim handles move, so the number under the Transcribe button is the cost
  * of the crop actually selected rather than of the whole file.
  */
-import { MAX_CLIP_SECONDS, json, mirelo, query, route } from "./_mirelo";
+import { MAX_CLIP_SECONDS, json, mirelo, query, route } from "./_mirelo.js";
 
 /** The same cap the upload enforces. Quoting a price for a clip that could
  *  never be sent would be quoting a lie. */

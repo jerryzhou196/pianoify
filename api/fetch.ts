@@ -13,7 +13,7 @@
  * type, and a hard byte ceiling.
  */
 import { lookup } from "node:dns/promises";
-import { ApiError, json, query, route } from "./_mirelo";
+import { ApiError, json, query, route } from "./_mirelo.js";
 
 const MAX_BYTES = 60 * 1024 * 1024;
 const MAX_REDIRECTS = 4;
@@ -62,6 +62,10 @@ function isPrivate(address: string, family: number): boolean {
 /** Content types we will hand back. Plenty of static hosts serve audio as
  *  `application/octet-stream`, which the browser decodes just as happily. */
 const ALLOWED = /^(audio\/|video\/mp4|application\/octet-stream)/i;
+
+/** A slow host serving a large file is the normal case here, not the
+ *  exceptional one. */
+export const config = { maxDuration: 300 };
 
 export default route({
   GET: async (req, res) => {
