@@ -23,6 +23,7 @@ export function Roll({
   layerRef,
   onSeekChord,
   empty,
+  decorative = false,
   children,
 }: {
   notes: Note[];
@@ -32,6 +33,12 @@ export function Roll({
   layerRef: RefObject<HTMLDivElement | null>;
   onSeekChord: (time: number) => void;
   empty: React.ReactNode;
+  /** Whether these notes are the decoration that plays behind the upload panel
+   *  rather than something anyone asked to see. It only marks the layer, for
+   *  the benefit of the reduced-motion rules: a transcription scrolls once and
+   *  stops when the reader stops it, but the decoration scrolls forever, which
+   *  is precisely the kind of thing that preference is set to be spared. */
+  decorative?: boolean;
   /** Anything that covers the roll — the sheet-music panel. It belongs inside
    *  this element, not beside it: `.roll` is the only positioned ancestor in
    *  the column, so an `inset: 0` overlay mounted as a sibling lays itself out
@@ -95,7 +102,7 @@ export function Roll({
       {octaves.map((left, i) => (
         <div key={i} className="roll-octave" style={{ left: `${left}%` }} />
       ))}
-      <div className="roll-layer" ref={layerRef}>
+      <div className={decorative ? "roll-layer decorative" : "roll-layer"} ref={layerRef}>
         {marks}
         {drawn}
       </div>
