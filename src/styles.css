@@ -461,6 +461,7 @@ input::placeholder {
   border-radius: 6px;
   padding: 18px 16px 24px;
   min-height: 120px;
+  text-align: center;
 }
 
 /* The tab with no page behind it yet: the box engraves a few seconds after the
