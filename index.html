@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- `viewport-fit=cover` is what makes `env(safe-area-inset-*)` report
+         anything other than zero: without it iOS letterboxes the page inside
+         the notch and the stylesheet's insets are all no-ops. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>pianoify</title>
     <meta
       name="description"
