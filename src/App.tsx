@@ -65,8 +65,6 @@ export default function App() {
   /* ── keep the engine in step with the state above ─────────────────────── */
 
   useEffect(() => engine.setNotes(notes, duration), [engine, notes, duration]);
-  useEffect(() => engine.setGrid(grid), [engine, grid]);
-  useEffect(() => engine.setChords(chords), [engine, chords]);
   // The slider runs transcribed → original; the engine's mix runs the other
   // way, because it is a gain on the piano.
   useEffect(() => engine.setMix(1 - blend), [engine, blend]);
@@ -154,9 +152,12 @@ export default function App() {
   /* ── transport ────────────────────────────────────────────────────────── */
 
   const toggle = useCallback(() => {
-    if (engine.playing) engine.pause();
-    else engine.play();
-    setPlaying(engine.playing);
+    if (engine.playing) {
+      engine.pause();
+      setPlaying(false);
+    } else {
+      void engine.play().then(() => setPlaying(engine.playing));
+    }
   }, [engine]);
 
   const seek = useCallback((seconds: number) => engine.seek(seconds), [engine]);
@@ -271,12 +272,11 @@ export default function App() {
         // whoever is listening to it.
         if (!engine.playing) {
           engine.seek(0);
-          engine.play();
-          setPlaying(true);
+          void engine.play().then(() => setPlaying(engine.playing));
         }
 
         // The chords land whenever they land: the transcription is already
-        // playing, and the bands and the pedal lifts appear under it.
+        // playing, and the bands appear under it.
         const recognized = await chordRun;
         if (!stale() && recognized?.length) setChords(recognized);
       } catch (e) {
@@ -361,7 +361,7 @@ export default function App() {
         {busy && <Working stage={stage} onCancel={cancel} />}
       </Roll>
 
-      <Keyboard register={registerKey} onStrike={(midi) => engine.strike(midi)} />
+      <Keyboard register={registerKey} onStrike={(midi) => void engine.strike(midi)} />
 
       <Transport
         playing={playing}
@@ -398,7 +398,10 @@ function useEngine(): Engine {
   const ref = useRef<Engine | null>(null);
   if (!ref.current) ref.current = new Engine();
   const engine = ref.current;
-  useEffect(() => () => engine.dispose(), [engine]);
+  useEffect(() => {
+    engine.prepare();
+    return () => engine.dispose();
+  }, [engine]);
   return engine;
 }
 
