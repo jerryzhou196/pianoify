@@ -6,16 +6,80 @@
          anything other than zero: without it iOS letterboxes the page inside
          the notch and the stylesheet's insets are all no-ops. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>pianoify</title>
+
+    <!-- The title is what a search result is, so it says what the thing does
+         rather than only what it is called. Under sixty characters, because
+         Google truncates around there and a name cut in half helps nobody. -->
+    <title>pianoify — audio to piano MIDI and sheet music</title>
+    <!-- Not a ranking signal, but it is the sentence under the blue link, and
+         that is what decides whether the link gets clicked. Around 155
+         characters for the same truncation reason as the title. The names of
+         the models that do the work are in the README; a searcher does not
+         know what Mirelo is and is not looking for it. -->
+    <meta
+      name="description"
+      content="Drop in an audio file or paste a YouTube link and hear it back as piano. Free audio-to-MIDI transcription with sheet music, in the browser, in about ten seconds."
+    />
+    <!-- One page, one URL. The apex, the `www`, and a different preview
+         hostname on every deploy are all serving this exact HTML, and without
+         this Google picks a winner among them on its own. -->
+    <link rel="canonical" href="https://www.pianoify.net/" />
+    <!-- The defaults, said out loud, plus permission to use the card below at
+         full size in a result rather than as a thumbnail. -->
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="theme-color" content="#000000" />
+
+    <!-- The unfurl: Slack, iMessage, Discord, X, and the preview card Google
+         sometimes shows on mobile. `public/og.png` is generated from
+         `tools/og-card.html` — see the note at the top of that file. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="pianoify" />
+    <meta property="og:url" content="https://www.pianoify.net/" />
+    <meta property="og:title" content="pianoify — turn any recording into piano" />
+    <meta
+      property="og:description"
+      content="Drop in an audio file or paste a YouTube link and hear it back as piano. Free audio-to-MIDI transcription with sheet music, in the browser."
+    />
+    <meta property="og:image" content="https://www.pianoify.net/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The word pianoify over a piano keyboard with two keys lit green and blue, notes falling onto them."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- What the app is, in the vocabulary a search engine already has words
+         for. `price: 0` is the line that earns the "Free" chip on a result,
+         and it is true: the GPU box is rented by the hour and the chord
+         service is a free Space, so nothing here is charged for. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "pianoify",
+        "url": "https://www.pianoify.net/",
+        "description": "Drop in an audio file or paste a YouTube link and hear it back as piano. Free audio-to-MIDI transcription with sheet music, in the browser.",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Any",
+        "browserRequirements": "Requires JavaScript and the Web Audio API",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": [
+          "Audio to MIDI transcription",
+          "Piano roll playback on a sampled grand",
+          "Sheet music engraved as MusicXML",
+          "Chord recognition",
+          "YouTube link import",
+          "MIDI and MusicXML export"
+        ]
+      }
+    </script>
+
     <!-- The favicon is an inline SVG wrapping the piano emoji, so the tab
          icon rides on the platform's own glyph and there's no image to ship. -->
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B9%3C/text%3E%3C/svg%3E"
-    />
-    <meta
-      name="description"
-      content="Drop in a recording, hear it back as piano. Notes transcribed by Mirelo, chords by BTC."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -23,9 +87,70 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+
+    <!-- Styles for the paragraph below and nothing else, inline because it has
+         to be right before the bundle's stylesheet exists. Six rules; the
+         design lives in `src/styles.css` as it always did. -->
+    <style>
+      .boot {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 14px;
+        max-width: 34rem;
+        margin: 0 auto;
+        padding: 0 24px;
+        background: #000;
+        color: #cfcfcf;
+        font-family: "DM Sans", Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+      }
+      .boot h1 {
+        margin: 0;
+        font-size: 3rem;
+        letter-spacing: -0.04em;
+        color: #fff;
+      }
+      .boot p {
+        margin: 0;
+      }
+      .boot ul {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- React clears `#root` on its first render, so what is written inside it
+         is only ever seen by two audiences: a crawler that did not run the
+         bundle, and a visitor for the moment before it mounts.
+
+         Both are worth writing for. Googlebot does render JavaScript, but it
+         renders it on a second pass whenever it feels like it, and until then
+         this app is an empty div — which is a page with nothing on it to
+         index. The sentences below are the app's own; nothing here is written
+         for a crawler that a person would not also be shown. -->
+    <div id="root">
+      <main class="boot">
+        <h1>pianoify</h1>
+        <p>Drop in a recording, hear it back as piano.</p>
+        <p>
+          Drop an audio file or paste a YouTube link. It is decoded in the tab, drawn as a waveform,
+          and cropped to ten seconds. That clip goes to a transcriber, which sends back the notes —
+          and the piano roll fills in while the model is still decoding, plays on a sampled Steinway
+          grand with a working damper pedal, engraves the transcription as sheet music, and
+          crossfades against the original recording.
+        </p>
+        <ul>
+          <li>Audio to MIDI, free, in the browser</li>
+          <li>Sheet music you can export as MusicXML</li>
+          <li>Chords recognised under the notes</li>
+          <li>Works on an MP3, a WAV, a voice memo, or a YouTube link</li>
+        </ul>
+        <p>Loading the app — it needs JavaScript and the Web Audio API.</p>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

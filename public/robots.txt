@@ -1,0 +1,13 @@
+# One page, and it wants to be found.
+User-agent: *
+Allow: /
+
+# The paths this origin only holds so a browser never has to talk to anything
+# else: the Mirelo functions and the two transcriber rewrites. None of them
+# answer a GET with a page, so a crawler that tries one is spending its budget
+# on a 405.
+Disallow: /api/
+Disallow: /gpu/
+Disallow: /ytdlp/
+
+Sitemap: https://www.pianoify.net/sitemap.xml
