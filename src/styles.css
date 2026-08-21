@@ -32,6 +32,10 @@
   --sans: "DM Sans", Helvetica, Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
+  /* The header's height, as a number two rules need: the bar sets it, and the
+   * working strip hangs itself below it. */
+  --bar: 46px;
+
   color-scheme: dark;
 }
 
@@ -44,6 +48,10 @@ body {
   margin: 0;
   padding: 0;
   background: var(--bg);
+  /* The app is exactly one screen tall and scrolls nothing, so the rubber-band
+   * at the end of a swipe — and the pull-to-refresh above it — can only ever be
+   * something the user did not mean. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -54,6 +62,10 @@ body {
 
 button {
   font-family: inherit;
+  /* `manipulation` drops the double-tap-to-zoom wait, which is the 300ms every
+   * button on a phone otherwise spends deciding whether the tap was a tap. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 input::placeholder {
@@ -61,7 +73,15 @@ input::placeholder {
 }
 
 .app {
+  /* Positioned so the working strip has something to hang off; it used to hang
+   * off the roll, which on a phone is wider than the screen. */
+  position: relative;
   height: 100vh;
+  /* And on a phone, the height that is actually visible: `100vh` there is the
+   * viewport with the browser's own chrome pretended away, which puts the
+   * transport under the address bar until you scroll — and nothing here
+   * scrolls. */
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -75,7 +95,7 @@ input::placeholder {
 /* ── top bar ─────────────────────────────────────────────────────────────── */
 
 .bar {
-  height: 46px;
+  height: var(--bar);
   flex: none;
   display: flex;
   align-items: center;
@@ -288,6 +308,17 @@ input::placeholder {
 
 /* ── the roll ────────────────────────────────────────────────────────────── */
 
+/* The roll and the keyboard are one drawing: both are laid out as percentages
+ * of the same width, which is what makes a note land on its key. So they pan
+ * as one thing or not at all — and on a screen wide enough to draw them at,
+ * not at all. `display: contents` leaves both of them flex children of `.app`,
+ * exactly as they were before this wrapper existed; the phone breakpoint at
+ * the bottom of this file is the only place it becomes a real element. */
+.instrument,
+.instrument-track {
+  display: contents;
+}
+
 .roll {
   flex: 1;
   position: relative;
@@ -455,6 +486,10 @@ input::placeholder {
   flex: none;
   position: relative;
   background: var(--bg);
+  /* A run up the keyboard is a drag, and a drag across text is a selection
+   * unless something says otherwise. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .key {
@@ -462,6 +497,10 @@ input::placeholder {
   top: 0;
   border-radius: 0 0 2px 2px;
   cursor: pointer;
+  /* Not `none`: a finger has to be able to pan the keyboard sideways from
+   * anywhere on it, including from on top of a key. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .key.white {
@@ -499,6 +538,9 @@ input::placeholder {
   height: 3px;
   background: #1c1c1c;
   cursor: pointer;
+  /* Dragging along it scrubs; without this the same drag would be handed to
+   * the browser as a swipe and the position would never move. */
+  touch-action: none;
 }
 
 .scrub .fill {
@@ -604,6 +646,7 @@ input::placeholder {
   display: flex;
   align-items: center;
   cursor: pointer;
+  touch-action: none;
 }
 
 .blend-track .rail {
@@ -900,6 +943,10 @@ input::placeholder {
 .wave {
   position: relative;
   height: 84px;
+  /* Sliding the window is a horizontal drag inside a panel that scrolls
+   * vertically, and on a touch screen the browser resolves that ambiguity in
+   * the scroll's favour unless it is told not to. */
+  touch-action: none;
 }
 
 /* Only the slidable wave claims the gesture: when the whole file already fits
@@ -1003,7 +1050,7 @@ input::placeholder {
 
 .working {
   position: absolute;
-  top: 12px;
+  top: calc(var(--bar) + 12px);
   right: 12px;
   z-index: 20;
   display: flex;
@@ -1072,5 +1119,363 @@ input::placeholder {
      keys still light, and the panel covers most of the roll regardless. */
   .roll-layer.decorative {
     display: none;
+  }
+}
+
+/* ── the phone ───────────────────────────────────────────────────────────── */
+
+/**
+ * Everything above is the design as it was drawn, at the width it was drawn
+ * for. What follows is the same design on a screen a third that wide, and it
+ * is only ever additive — no rule up there was loosened to make room for it,
+ * because the desktop layout is the one this app is for.
+ *
+ * Three things do not survive the narrowing on their own. The two bars are
+ * single rows of controls that add up to more than 390px, so they wrap. The
+ * modal is the first thing anyone sees and cannot be dismissed until it has
+ * been used, so it gets the whole screen minus the notch. And the keyboard is
+ * eighty-eight keys, which at this width is a seven-pixel white key: not an
+ * instrument, and barely a picture of one. It keeps a playable width and pans
+ * instead, with the roll pinned to it — see `.instrument`.
+ */
+
+@media (max-width: 760px) {
+  .instrument {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+  }
+
+  /* Wide enough that a white key is a finger and not a hair, and never
+   * narrower than the screen — a tablet at 700px gets no scrollbar it has no
+   * use for. */
+  .instrument-track {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    width: 760px;
+    min-width: 100%;
+  }
+
+  .roll {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .keys {
+    height: clamp(76px, 15vh, 124px);
+  }
+
+  /* A row of the app rather than a badge floating over it. Floating it would
+   * mean naming a distance to hold it clear of the transport, and the
+   * transport's height here is whatever its controls wrapped to — a number
+   * this stylesheet has no way to ask for and would therefore have to guess.
+   * In the flow it clears the transport by construction, and the roll gives up
+   * the 38px, which it can afford and the controls underneath cannot. */
+  .working {
+    position: static;
+    flex: none;
+    margin: 0 max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left));
+  }
+
+  /* ── the bars ──────────────────────────────────────────────────────────── */
+
+  .bar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px
+      max(10px, env(safe-area-inset-left));
+  }
+
+  /* Mode and view on the first line, what is loaded on the second, the two
+   * exports sharing the third. Ordered explicitly because wrapping on content
+   * width alone leaves the filename a 90px sliver at the end of line one.
+   *
+   * The mode chip asks for 130px rather than for the width of "Mirelo v1.0 ·
+   * performance": a flex line breaks on what its items ask for, before any of
+   * them is allowed to shrink, so a chip that asks for its full label pushes
+   * the tabs onto a line of their own and costs a fourth row. It grows into
+   * whatever the tabs leave and truncates when there is nothing left. */
+  .picker {
+    order: 1;
+    flex: 1 1 130px;
+    min-width: 0;
+  }
+
+  .chip {
+    max-width: 100%;
+  }
+
+  .chip .label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tabs {
+    order: 2;
+    flex: 1 1 auto;
+  }
+
+  .tab {
+    flex: 1;
+  }
+
+  .bar-file {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .action {
+    order: 4;
+    flex: 1 1 0;
+  }
+
+  .picker-menu {
+    width: min(288px, calc(100vw - 24px));
+  }
+
+  .transport {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    padding: 18px max(12px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .transport-left {
+    flex: 0 1 auto;
+    gap: 10px;
+  }
+
+  .clock {
+    min-width: 0;
+  }
+
+  /* Asking for no more than it needs, so the speed stepper rides beside it on
+   * a screen with room for both and drops to the right-hand end of the next
+   * line on one without. At a fingertip's sizes the two of them come to about
+   * 380px, which a 390px phone loses by eighteen — narrowing the gaps until it
+   * fitted would buy this one width and still wrap on a 360px handset. */
+  .speed {
+    margin-left: auto;
+  }
+
+  /* The crossfade takes the second line whole: it is the one control here that
+   * is worth a wide track, and sharing a line with the speed stepper leaves it
+   * about a centimetre. */
+  .blend {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  /* ── the modal ─────────────────────────────────────────────────────────── */
+
+  /* Top-aligned rather than centred: the on-screen keyboard halves the screen
+   * the moment the URL field is focused, and a centred panel jumps when it
+   * does. */
+  .scrim {
+    align-items: flex-start;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .modal {
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .drop {
+    height: 108px;
+    padding: 0 12px;
+    text-align: center;
+  }
+
+  .or {
+    margin: 12px 0;
+  }
+
+  .trim {
+    margin-top: 16px;
+    padding-top: 14px;
+  }
+
+  .trim-head {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+
+  .wave {
+    height: 72px;
+  }
+
+  /* Two hundred bars and a gap between each of them is more gap than waveform
+   * once the panel is this narrow. */
+  .wave-bars {
+    gap: 0;
+  }
+
+  .wave-bars i {
+    border-radius: 0;
+  }
+
+  .modal-foot {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .modal-foot .quote {
+    text-align: center;
+  }
+
+  .go {
+    width: 100%;
+  }
+
+  .sheet {
+    padding: 10px;
+  }
+
+  .sheet-head {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+}
+
+/* ── touch ───────────────────────────────────────────────────────────────── */
+
+/**
+ * Sizes for a fingertip rather than a cursor, keyed on the pointer and not on
+ * the width — a tablet is wide enough for the desktop layout and still has
+ * nothing but thumbs to drive it. Roughly 44px on anything that is pressed;
+ * the piano keys are the deliberate exception, since a key wide enough to tap
+ * comfortably is a key too wide for eighty-eight of them to be a keyboard.
+ */
+
+@media (pointer: coarse) {
+  .chip {
+    height: 38px;
+    padding: 0 14px;
+    font-size: 12px;
+  }
+
+  .tab {
+    height: 36px;
+    padding: 0 14px;
+    font-size: 12.5px;
+  }
+
+  .ghost {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+
+  .action {
+    height: 40px;
+    font-size: 12.5px;
+  }
+
+  .picker-option {
+    padding: 12px 12px;
+  }
+
+  .icon-button {
+    width: 44px;
+    height: 44px;
+    font-size: 14px;
+  }
+
+  .play {
+    width: 48px;
+    height: 48px;
+    font-size: 15px;
+  }
+
+  .step {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+  }
+
+  /* A 3px line is a target you hit by accident. The bar stays 3px of ink and
+   * becomes 14px of hit area around it, and the three groups below it are
+   * lifted into their own layer so the taller strip cannot swallow the top
+   * edge of the play button. */
+  .scrub {
+    height: 14px;
+    background: transparent;
+  }
+
+  .scrub::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 5px;
+    height: 4px;
+    background: #1c1c1c;
+  }
+
+  .scrub .fill {
+    position: relative;
+    top: 5px;
+    height: 4px;
+  }
+
+  .transport-left,
+  .blend,
+  .speed {
+    position: relative;
+  }
+
+  .blend-track {
+    height: 34px;
+  }
+
+  .blend-track .knob {
+    width: 24px;
+    height: 24px;
+    margin-left: -12px;
+  }
+
+  .url {
+    height: 46px;
+  }
+
+  /* Anything under 16px in a focused field is a field iOS zooms the page into,
+   * and it does not zoom back out afterwards. */
+  .url input {
+    font-size: 16px;
+  }
+
+  .url button {
+    height: 36px;
+    padding: 0 14px;
+    font-size: 12px;
+  }
+
+  .go {
+    height: 46px;
+    padding: 0 20px;
+    font-size: 14px;
+  }
+
+  .wave-play {
+    width: 44px;
+    height: 44px;
+    margin: -22px 0 0 -22px;
+    font-size: 13px;
+  }
+
+  .roll-chord .label {
+    padding: 8px 14px;
   }
 }

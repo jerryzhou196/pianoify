@@ -36,7 +36,11 @@ export function Transport({
   enabled: boolean;
 }) {
   const track = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
+  const scrubbing = useRef(false);
+  const lastSeek = useRef(0);
+  const lastX = useRef(0);
 
   const setFromEvent = useCallback(
     (clientX: number) => {
@@ -47,31 +51,58 @@ export function Transport({
     [onBlend],
   );
 
-  // The drag continues outside the track — a slider you lose the moment the
-  // pointer leaves its 20px is not a slider.
+  /** Seeking is not free: the engine silences every sounding voice and starts
+   *  the original recording again from the new offset. Sixty of those a second
+   *  is a drag that sounds like tearing paper, so one lands every tenth of a
+   *  second while the pointer moves and one lands on release, which reads as
+   *  continuous and is not. */
+  const seekFromEvent = useCallback(
+    (clientX: number, settle: boolean) => {
+      const rect = bar.current?.getBoundingClientRect();
+      if (!rect) return;
+      const now = performance.now();
+      if (!settle && now - lastSeek.current < 100) return;
+      lastSeek.current = now;
+      onSeekFraction((clientX - rect.left) / rect.width);
+    },
+    [onSeekFraction],
+  );
+
+  // Both drags continue outside the strip they started on — a slider you lose
+  // the moment the pointer leaves its 20px is not a slider. Pointer events
+  // rather than mouse ones, so the same handler serves a finger: on a phone
+  // these were the two controls with nothing listening at all.
   useEffect(() => {
-    const move = (e: MouseEvent) => {
+    const move = (e: PointerEvent) => {
+      lastX.current = e.clientX;
       if (dragging.current) setFromEvent(e.clientX);
+      if (scrubbing.current) seekFromEvent(e.clientX, false);
     };
     const up = () => {
+      if (scrubbing.current) seekFromEvent(lastX.current, true);
       dragging.current = false;
+      scrubbing.current = false;
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
     return () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
-  }, [setFromEvent]);
+  }, [setFromEvent, seekFromEvent]);
 
   return (
     <footer className="transport">
       <div
         className="scrub"
-        onClick={(e) => {
+        ref={bar}
+        onPointerDown={(e) => {
           if (!enabled) return;
-          const rect = e.currentTarget.getBoundingClientRect();
-          onSeekFraction((e.clientX - rect.left) / rect.width);
+          scrubbing.current = true;
+          lastX.current = e.clientX;
+          seekFromEvent(e.clientX, true);
         }}
       >
         <div className="fill" ref={scrubRef} />
@@ -103,7 +134,7 @@ export function Transport({
           className="blend-track"
           ref={track}
           data-disabled={enabled ? 0 : 1}
-          onMouseDown={(e) => {
+          onPointerDown={(e) => {
             if (!enabled) return;
             dragging.current = true;
             setFromEvent(e.clientX);
