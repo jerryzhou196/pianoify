@@ -16,10 +16,12 @@
  *
  * The types below are shared rather than per-backend so that `App.tsx` can
  * hold one set of handlers and hand it to whichever of the two the picker
- * names. This module imports nothing: both clients import *it*, which is what
- * keeps that from being a cycle.
+ * names. Both clients import *this* module rather than each other, which is
+ * what keeps that from being a cycle; the only things it imports are a type
+ * and a number, neither of which imports back.
  */
 
+import { MAX_CLIP_SECONDS } from "./config";
 import type { Note } from "./types";
 
 /** How Mirelo should write note times. Not a MuScriptor choice — the box
@@ -67,6 +69,15 @@ export interface Model {
   /** Whether picking this one spends Mirelo credits — which is what decides
    *  if the modal quotes a price before the button. */
   billed: boolean;
+  /** The longest clip this one takes, in seconds, or null for no limit.
+   *
+   *  It is the trim handles' stop, so it is a property of the model rather
+   *  than of the app: the two backends disagree about it, and they disagree
+   *  for the reason they differ about everything else. Mirelo bills by the
+   *  second and refuses anything past ten minutes; the box is rented by the
+   *  hour, transcribes in five-second chunks it streams as it goes, and has
+   *  no length it will not take — only one it will take a while over. */
+  maxSeconds: number | null;
 }
 
 /**
@@ -88,8 +99,9 @@ export const MODELS: Model[] = [
     service: "the gpu box",
     name: "MuScriptor · GPU box",
     tag: "self-hosted",
-    note: "Runs on the rented GPU rather than a hosted API: no credits, and the notes appear on the roll as the box decodes them. The sheet music is engraved a few seconds behind them.",
+    note: "Runs on the rented GPU rather than a hosted API: no credits, no length limit, and the notes appear on the roll as the box decodes them. The sheet music is engraved a few seconds behind them.",
     billed: false,
+    maxSeconds: null,
   },
   {
     id: "mirelo-performance",
@@ -100,6 +112,7 @@ export const MODELS: Model[] = [
     note: "Keeps the take exactly as played, rubato and all, and describes its pacing with a tempo map.",
     timing: "performance",
     billed: true,
+    maxSeconds: MAX_CLIP_SECONDS,
   },
   {
     id: "mirelo-quantized",
@@ -110,6 +123,7 @@ export const MODELS: Model[] = [
     note: "Snaps onsets to the detected beats — honoured only when that grid is steady enough to move notes onto.",
     timing: "quantized",
     billed: true,
+    maxSeconds: MAX_CLIP_SECONDS,
   },
 ];
 
