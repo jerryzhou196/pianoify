@@ -25,16 +25,16 @@ export function ModelPicker({
   // Escape. Without this it survives a click on whatever is behind it.
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       if (!picker.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    window.addEventListener("mousedown", onDown);
+    window.addEventListener("pointerdown", onDown);
     window.addEventListener("keydown", onKey);
     return () => {
-      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -50,7 +50,7 @@ export function ModelPicker({
         aria-expanded={open}
       >
         <span className="dot" />
-        <span>{current.name}</span>
+        <span className="label">{current.name}</span>
         <span className="caret">▾</span>
       </button>
       {open && (
