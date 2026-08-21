@@ -204,7 +204,7 @@ function readGrid(result: any): BeatGrid | null {
   const bpm = Number(g.tempo_bpm ?? result.tempo_bpm);
   if (!Number.isFinite(bpm) || bpm <= 0) return null;
   const detected = g.tempo_source === "detected";
-  const beatsPerBar = Number(g.beats_per_bar) || 4;
+  const beatsPerBar = Number(g.beats_per_bar) || null;
   const pickup = Number(g.pickup_beats) || 0;
   return {
     bpm,
