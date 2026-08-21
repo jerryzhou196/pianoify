@@ -9,7 +9,7 @@
  * has decoded so far, which is what lets the roll fill in while the model is
  * still working instead of staying empty until the end.
  */
-import { INSTRUMENTS, json, mirelo, query, readJson, route } from "./_mirelo.js";
+import { INSTRUMENTS, json, mirelo, query, readJson, route, throttle } from "./_mirelo.js";
 
 const BASE = "/v2/audio-to-midi/v1.0";
 
@@ -25,6 +25,10 @@ const JOB_ID = /^[a-zA-Z0-9_-]{8,128}$/;
 
 export default route({
   POST: async (req, res) => {
+    // Same window as /api/asset: a person iterating is fine, a replay of this
+    // request from the network tab is not. GET is the poller (once a second
+    // while a job runs) and is left alone.
+    throttle(req, "job", 6, 10 * 60_000);
     const body = await readJson(req);
     const assetId = String(body.asset_id ?? "");
     if (!assetId) {
