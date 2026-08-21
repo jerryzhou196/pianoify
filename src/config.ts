@@ -1,11 +1,10 @@
 /**
  * What the client needs to know about the outside world.
  *
- * The transcriber is no longer one of these. Mirelo is reached through this
- * site's own `/api/*` functions, because the API key bills a real account and
- * anything `VITE_*` is inlined into a bundle a browser can read — so there is
- * no transcription origin to configure here, only the chord service, which is
- * public and has no key.
+ * Mirelo is not one of these. It is reached through this site's own `/api/*`
+ * functions, because the API key bills a real account and anything `VITE_*` is
+ * inlined into a bundle a browser can read. The other three backends — chords,
+ * yt-dlp, and the GPU box — are public or same-origin, and are named here.
  */
 
 function base(raw: string | undefined, fallback: string): string {
@@ -53,6 +52,29 @@ export const CLIP_SECONDS = MAX_CLIP_SECONDS;
 export const YTDLP_BASE = base(import.meta.env.VITE_YTDLP_API_BASE, "");
 
 export const ytdlpApi = (path: string) => YTDLP_BASE + path;
+
+/**
+ * The GPU box that runs MuScriptor, the other transcriber in the picker.
+ *
+ * The default is a path on this origin, not the box's own hostname: the box
+ * answers a browser only from origins in its `MUSCRIPTOR_ALLOWED_ORIGINS`, and
+ * a Vercel preview URL is never one of them. `/gpu/*` is rewritten to the box
+ * by `vercel.json` in production and proxied by the dev server locally, which
+ * makes every call same-origin to the browser and server-to-server to the box,
+ * where CORS does not apply.
+ *
+ * Point this at `https://muscriptor-api.jerryzhou.ca` to talk to the box
+ * directly — which works only from an origin it lists. Blank means the default
+ * rather than same-origin-with-no-prefix, which the chord base above uses it
+ * for: there the prefix *is* the path the proxy matches, so an empty base
+ * would only produce a URL nothing serves.
+ */
+export const MUSCRIPTOR_BASE = base(
+  import.meta.env.VITE_MUSCRIPTOR_API_BASE?.trim() || undefined,
+  "/gpu",
+);
+
+export const muscriptorApi = (path: string) => MUSCRIPTOR_BASE + path;
 
 /** Pixels per second of music on the roll. At 130 a bar of anything moderate
  *  is about a thumb's width, which is the zoom the roll was designed at. */

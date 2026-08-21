@@ -14,12 +14,14 @@ import react from "@vitejs/plugin-react";
  *   run in both places. `ssrLoadModule` compiles the TypeScript and picks up
  *   edits without a restart.
  *
- *   `/analyze` and `/ytdlp` — the chord Space and the self-hosted yt-dlp
- *   service are both CORS-gated on exact origins, and no localhost is in
- *   either allowlist. Proxying makes the request same-origin to the browser
- *   and server-to-server to the backend, where CORS does not apply. In
- *   production `vercel.json` rewrites `/ytdlp` the same way, so the app never
- *   appears in that service's allowlist at all.
+ *   `/analyze`, `/ytdlp` and `/gpu` — the chord Space, the self-hosted yt-dlp
+ *   service and the MuScriptor GPU box are all CORS-gated on exact origins,
+ *   and no localhost is in any of the allowlists. Proxying makes the request
+ *   same-origin to the browser and server-to-server to the backend, where CORS
+ *   does not apply. In production `vercel.json` rewrites `/ytdlp` and `/gpu`
+ *   the same way, so the app never appears in those allowlists at all — which
+ *   matters most for the box, since a Vercel preview URL is different on every
+ *   deployment and could never be listed ahead of time.
  */
 function devApi(): Plugin {
   const ROUTES: Record<string, string> = {
@@ -60,6 +62,7 @@ export default defineConfig(({ mode }) => {
 
   const chords = env.DEV_CHORD_BACKEND ?? "https://jerrdeh-muscriptor-chords.hf.space";
   const ytdlp = env.DEV_YTDLP_BACKEND ?? "https://jerryzhou.ca";
+  const gpu = env.DEV_MUSCRIPTOR_BACKEND ?? "https://muscriptor-api.jerryzhou.ca";
 
   return {
     plugins: [react(), devApi()],
@@ -71,6 +74,17 @@ export default defineConfig(({ mode }) => {
         // its CORS allowlist is the slowedrvb origins — and with no timeout,
         // because a download runs at about half the video's own length.
         "/ytdlp": { target: ytdlp, changeOrigin: true, secure: true, timeout: 0, proxyTimeout: 0 },
+        // The GPU box. `/gpu` is this app's prefix, not the box's, so it comes
+        // off on the way through. No timeout: `/transcribe` holds the response
+        // open for as long as the box takes, and the notes arrive down it.
+        "/gpu": {
+          target: gpu,
+          changeOrigin: true,
+          secure: true,
+          timeout: 0,
+          proxyTimeout: 0,
+          rewrite: (path: string) => path.replace(/^\/gpu/, ""),
+        },
       },
     },
     build: {
