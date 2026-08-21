@@ -7,8 +7,8 @@ waveform, and cropped to ten seconds — opening on the first thing you actually
 played. That crop goes to [Mirelo](https://mirelo.ai)'s audio-to-MIDI API,
 conditioned on `acoustic_piano`, which sends back the notes; the chords come
 from a CPU-only Hugging Face Space running BTC. The roll fills in while the
-model is still decoding, plays on a synthesized grand with a working damper
-pedal, engraves Mirelo's MusicXML on a second tab, and crossfades against the
+model is still decoding, plays on a sampled Steinway grand with a short natural
+release, engraves Mirelo's MusicXML on a second tab, and crossfades against the
 original recording.
 
 ## Running it
@@ -53,7 +53,7 @@ audio file, or a youtube link
    └─ POST /analyze  (HF)  → chords, in parallel, from a different machine
    ↓
    ↓  hands.ts          split the notes between the hands; put a finger on each
-   ↓  engine.ts         schedule them on a synthesized piano
+   ↓  engine.ts         schedule them on a sampled Steinway piano
    ↓  Roll.tsx          draw them falling onto the keyboard, as they arrive
 ```
 
@@ -133,23 +133,21 @@ publishes one audio-to-MIDI model. `performance` keeps the take as played;
 grid is steady enough to move notes onto — the sheet-music caption reports what
 was actually applied, and why, when the two differ.
 
-### The pedal
+### The piano
 
-`engine.ts` synthesizes rather than sampling — a sampled grand is a ~38MB
-soundfont before the first note sounds, which is the wrong trade for a page
-whose whole promise is immediacy. What a synthesized piano usually gets wrong
-is the decay, so that is where the work went: inharmonic partials with
-per-partial decay rates, a hammer transient, and a shared soundboard convolver
-that the ringing strings feed.
+`engine.ts` plays real Steinway recordings from the public-domain
+[Splendid Grand Piano](https://github.com/sfzinstruments/SplendidGrandPiano)
+set through [`smplr`](https://github.com/danigb/smplr). It loads thirteen
+pitches at two touch levels while the upload panel is open, then transposes the
+nearest recording by no more than four semitones to cover the keyboard. That
+keeps the initial sample transfer to a few megabytes instead of shipping the
+full 256 MB library.
 
-The damper pedal is the part worth knowing about. A note stops when the
-transcription says the key was released — unless the pedal is down, in which
-case the string rings on until the next **chord change**, where the pedal comes
-up and everything still ringing is damped. That is what a pianist actually
-does, and it is the only reason a pedalled passage stays usable: held literally
-for ten seconds it would accumulate into a chord of the entire clip. With no
-chord track the lifts fall on the bar instead, and with no beat grid either,
-every two seconds. It is the one thing the chord service does to the *audio*.
+Each key gets a 420 ms release after the transcription says it came up. That is
+enough sustain for one note to hand naturally into the next, but short enough
+that a new chord does not inherit the whole previous harmony. Playback waits
+for every selected sample to decode, so a cold cache delays the first play
+rather than silently dropping its opening notes.
 
 ### Hands and fingering
 
@@ -167,18 +165,18 @@ something you can see the shape of.
 ### Speed
 
 The transport's speed control stretches the piece onto the clock in one place
-(`clockTime`). The synthesized piano re-voices every note at the pitch it was
-written at, so it stays in tune at 0.5×; the original recording is *resampled*,
-so it drops an octave the way a slowed tape does. That is the honest trade for
-a control whose job is to let you follow a fast passage, and it is why the
-crossfade usually wants to be on the transcribed side when the speed is not 1.
+(`clockTime`). The sampled piano triggers each written note independently, so
+it stays in tune at 0.5×; the original recording is *resampled*, so it drops an
+octave the way a slowed tape does. That is the honest trade for a control whose
+job is to let you follow a fast passage, and it is why the crossfade usually
+wants to be on the transcribed side when the speed is not 1.
 
 ### Chords
 
 From the Space, or not at all — Mirelo transcribes notes, not harmony. They
 show up as dashed rules across the roll labelled with the symbol (click one to
-jump there), as the current symbol in the transport, and as the pedal lifts. A
-sleeping chord service never turns a good transcription into an error.
+jump there), and as the current symbol in the transport. A sleeping chord
+service never turns a good transcription into an error.
 
 ## Layout
 
@@ -190,7 +188,7 @@ sleeping chord service never turns a good transcription into an error.
 | `src/chords.ts` | the chord service |
 | `src/links.ts` | pasted links: YouTube, and everything else |
 | `src/hands.ts` | hand splitting and fingering |
-| `src/engine.ts` | the piano, the pedal, the transport |
+| `src/engine.ts` | sampled-piano playback, crossfade, and transport |
 | `src/roll.ts` | keyboard geometry and note colour |
 | `src/App.tsx` | state, the animation loop, the layout |
 | `src/styles.css` | the design, translated from the Claude Design project |
