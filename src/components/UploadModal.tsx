@@ -29,11 +29,9 @@ import { clock } from "../roll";
  */
 export function UploadModal({
   onStart,
-  canClose,
   model,
 }: {
   onStart: (source: Source, crop: Crop) => void;
-  canClose: boolean;
   model: Model;
 }) {
   const [source, setSource] = useState<Source | null>(null);
