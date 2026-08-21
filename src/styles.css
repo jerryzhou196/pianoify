@@ -847,15 +847,17 @@ input::placeholder {
   min-width: 0;
 }
 
-/* Wide enough for the longer of the two labels, so switching to "Stop" does not
-   drag the caption beside it sideways. */
+/* Held at the width of "Play selection", the longer of the two labels, so that
+   switching to "Stop" mid-playback does not shrink the button and drag the
+   caption beside it sideways. Measured at 126.6px in the mono face; the 2px of
+   slack absorbs rounding on other platforms. */
 .trim-head .preview {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   height: 22px;
-  min-width: 116px;
+  min-width: 128px;
   padding: 0 10px;
   flex: none;
   border: 1px solid var(--edge-mid);
