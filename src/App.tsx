@@ -178,7 +178,9 @@ export default function App() {
       lit.clear();
       for (const midi of now.keys()) lit.add(midi);
 
-      // The transport can stop on its own when the clip runs out.
+      // The clip no longer runs out — it comes back round — but the engine can
+      // still stop itself if the samples never arrive, so the button follows it
+      // rather than the other way about.
       if (engine.playing !== playing) setPlaying(engine.playing);
     };
 
