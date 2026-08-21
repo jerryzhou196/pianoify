@@ -10,6 +10,7 @@ import {
 } from "../audio";
 import { LinkError, fetchLink, isYouTube } from "../links";
 import { quote } from "../mirelo";
+import type { Model } from "../models";
 import { clock } from "../roll";
 
 /**
@@ -30,12 +31,12 @@ export function UploadModal({
   onClose,
   onStart,
   canClose,
-  modeLabel,
+  model,
 }: {
   onClose: () => void;
   onStart: (source: Source, crop: Crop) => void;
   canClose: boolean;
-  modeLabel: string;
+  model: Model;
 }) {
   const [source, setSource] = useState<Source | null>(null);
   const [crop, setCrop] = useState<Crop>({ a: 0, b: 1 });
@@ -225,11 +226,14 @@ export function UploadModal({
   const window_ = source ? cropSeconds(source, crop) : null;
   const seconds = window_ ? window_.end - window_.start : 0;
 
+  // Only Mirelo has a price to quote — the box is rented by the hour, so a clip
+  // on it costs nothing extra and there is nothing to ask before sending it.
+  //
   // Re-quoted as the window settles. Debounced, because a drag would otherwise
   // fire a request per frame, and abandoned on the way out so a stale answer
   // cannot land on a newer window.
   useEffect(() => {
-    if (!source || seconds <= 0) {
+    if (!model.billed || !source || seconds <= 0) {
       setPrice(null);
       return;
     }
@@ -241,12 +245,19 @@ export function UploadModal({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [source, seconds]);
+  }, [model.billed, source, seconds]);
 
   /* ── render ────────────────────────────────────────────────────────────── */
 
   const left = crop.a * 100;
   const right = crop.b * 100;
+  // What this clip will cost. Null while an answer is still on its way — the
+  // line simply has one fewer thing in it until it lands.
+  const cost = !model.billed
+    ? "no credits"
+    : price?.credits != null
+      ? `${price.credits} credits`
+      : null;
 
   return (
     <div
@@ -371,8 +382,8 @@ export function UploadModal({
             <div className="modal-foot">
               <span className="quote">
                 {[
-                  modeLabel,
-                  price?.credits != null ? `${price.credits} credits` : null,
+                  model.name,
+                  cost,
                   price?.estimated_ms != null
                     ? `about ${Math.max(1, Math.round(price.estimated_ms / 1000))}s`
                     : null,

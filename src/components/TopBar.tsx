@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { TIMING_MODES, type TimingMode } from "../mirelo";
+import { MODELS, modelById, type ModelId } from "../models";
 
 /**
- * The header: which mode transcribed this, which way of looking at it is open,
- * what was transcribed, and the two exports.
+ * The header: which model transcribes, which way of looking at the result is
+ * open, what was transcribed, and the two exports.
  *
- * The exports hand over Mirelo's own renderings rather than anything built
- * here. The same transcription is returned as MIDI and as MusicXML behind
- * presigned links, so "export" is a fetch and a save — and what lands in a
- * notation editor is what the transcriber actually decoded, not this app's
- * re-derivation of it.
+ * The exports hand over the transcriber's own renderings rather than anything
+ * built here, so what lands in a notation editor is what was actually decoded
+ * and not this app's re-derivation of it. Mirelo returns both MIDI and
+ * MusicXML behind presigned links; the GPU box writes MIDI only, and leaves
+ * the MusicXML export and the sheet-music tab disabled.
  */
 export function TopBar({
-  mode,
-  onMode,
+  model,
+  onModel,
   view,
   onView,
   fileName,
@@ -21,8 +21,8 @@ export function TopBar({
   midiUrl,
   musicxmlUrl,
 }: {
-  mode: TimingMode;
-  onMode: (mode: TimingMode) => void;
+  model: ModelId;
+  onModel: (model: ModelId) => void;
   view: "roll" | "sheet";
   onView: (view: "roll" | "sheet") => void;
   fileName: string | null;
@@ -52,9 +52,17 @@ export function TopBar({
     };
   }, [open]);
 
-  const current = TIMING_MODES.find((m) => m.id === mode) ?? TIMING_MODES[0];
+  const current = modelById(model);
+  /** Why the two MusicXML-shaped controls are dead, when they are. The box
+   *  writes MIDI and nothing else, so "transcribe something first" would be
+   *  advice that does not work. */
+  const noXml =
+    current.backend === "muscriptor"
+      ? "the gpu box writes MIDI only — transcribe with Mirelo to engrave"
+      : "transcribe something first";
 
-  /** Save one of Mirelo's files under a name that means something.
+  /** Save one of the transcription's own files under a name that means
+   *  something.
    *
    *  Fetched into a blob rather than linked to directly: the presigned URL ends
    *  in `transcription.mid` for every transcription anyone has ever run, and a
@@ -98,14 +106,14 @@ export function TopBar({
         </button>
         {open && (
           <div className="picker-menu" role="listbox">
-            {TIMING_MODES.map((m) => (
+            {MODELS.map((m) => (
               <button
                 key={m.id}
                 className="picker-option"
                 role="option"
-                aria-selected={m.id === mode}
+                aria-selected={m.id === model}
                 onClick={() => {
-                  onMode(m.id);
+                  onModel(m.id);
                   setOpen(false);
                 }}
               >
@@ -135,7 +143,7 @@ export function TopBar({
           aria-selected={view === "sheet"}
           onClick={() => onView("sheet")}
           disabled={!musicxmlUrl}
-          title={musicxmlUrl ? undefined : "transcribe something first"}
+          title={musicxmlUrl ? undefined : noXml}
         >
           Sheet music
         </button>
@@ -151,6 +159,7 @@ export function TopBar({
       <button
         className="action"
         disabled={!musicxmlUrl || saving !== null}
+        title={musicxmlUrl ? undefined : noXml}
         onClick={() => musicxmlUrl && void save(musicxmlUrl, "musicxml")}
       >
         {saving === "musicxml" ? "Saving…" : "Export MusicXML"}

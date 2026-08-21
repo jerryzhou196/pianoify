@@ -1,8 +1,11 @@
 import { assignFingers, assignHands } from "./hands";
+import { TranscribeError, type TimingMode, type TranscribeHandlers } from "./models";
 import type { BeatGrid, Note, Timing, Transcription } from "./types";
 
 /**
- * Transcription, as the browser sees it.
+ * Transcription on Mirelo's hosted API — one of the two the picker offers,
+ * and the only one that engraves. The other is the GPU box in
+ * `src/muscriptor.ts`; both speak the vocabulary in `src/models.ts`.
  *
  * Two hops, neither of which carries the API key:
  *
@@ -21,31 +24,6 @@ import type { BeatGrid, Note, Timing, Transcription } from "./types";
  * returned. Two minutes of piano is three minutes of blank screen, and past
  * about three minutes it is a platform timeout as well.
  */
-
-export type TimingMode = "performance" | "quantized";
-
-/** What the transcribing overlay is currently saying. */
-export type Stage = "uploading" | "queued" | "transcribing" | "engraving";
-
-export interface TranscribeHandlers {
-  onStage?: (stage: Stage) => void;
-  /** 0–1 through whatever the current stage is, or null when the stage has no
-   *  measurable progress. */
-  onProgress?: (fraction: number | null) => void;
-  /** Notes decoded so far. Called only while the job is still running — the
-   *  finished set comes back from the promise. */
-  onNotes?: (notes: Note[]) => void;
-}
-
-/** A transcription that failed somewhere we can explain. `message` is Mirelo's
- *  own wording where it had one, which is almost always better than ours:
- *  "could not decode audio" says more than "HTTP 400" ever will. */
-export class MireloError extends Error {
-  constructor(message: string, readonly status?: number) {
-    super(message);
-    this.name = "MireloError";
-  }
-}
 
 /** How often to ask how the job is going. Mirelo's own guidance is 1–2s, and
  *  the roll gains a visible batch of notes about that often. */
@@ -120,7 +98,7 @@ async function poll(
       };
     }
     if (status === "errored" || status === "failed" || status === "cancelled") {
-      throw new MireloError(
+      throw new TranscribeError(
         payload.error?.message ?? payload.error ?? "the transcriber could not read that audio",
       );
     }
@@ -137,7 +115,7 @@ async function poll(
     if (Array.isArray(partial) && partial.length) handlers.onNotes?.(readNotes(partial));
 
     if (Date.now() > deadline) {
-      throw new MireloError("that transcription is taking longer than ten minutes — giving up");
+      throw new TranscribeError("that transcription is taking longer than ten minutes — giving up");
     }
     await sleep(POLL_MS, signal);
   }
@@ -261,7 +239,7 @@ async function api<T>(
   });
   const body = await resp.json().catch(() => null);
   if (!resp.ok) {
-    throw new MireloError(body?.error ?? `${path} answered ${resp.status}`, resp.status);
+    throw new TranscribeError(body?.error ?? `${path} answered ${resp.status}`, resp.status);
   }
   return body as T;
 }
@@ -294,10 +272,10 @@ function upload(
         onProgress(1);
         resolve(body);
       } else {
-        reject(new MireloError(body?.error ?? `the upload was refused (${xhr.status})`, xhr.status));
+        reject(new TranscribeError(body?.error ?? `the upload was refused (${xhr.status})`, xhr.status));
       }
     };
-    xhr.onerror = () => reject(new MireloError("the upload could not reach the server"));
+    xhr.onerror = () => reject(new TranscribeError("the upload could not reach the server"));
     xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(file);
@@ -321,37 +299,3 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     );
   });
 }
-
-/* ── what the picker offers ──────────────────────────────────────────────── */
-
-/**
- * The two ways Mirelo will write the same transcription.
- *
- * This is the app's whole model menu, because Mirelo publishes one
- * audio-to-MIDI model (v1.0) and one meaningful choice about how it reports its
- * results. `quantized` is a request rather than an instruction — the server
- * honours it only when the beat grid it detected is steady enough to move notes
- * onto, and says so in `timing.applied` when it isn't.
- */
-export const TIMING_MODES: {
-  id: TimingMode;
-  name: string;
-  tag: string;
-  note: string;
-}[] = [
-  {
-    id: "performance",
-    name: "Mirelo v1.0 · performance",
-    tag: "as played",
-    note: "Keeps the take exactly as played, rubato and all, and describes its pacing with a tempo map.",
-  },
-  {
-    id: "quantized",
-    name: "Mirelo v1.0 · quantized",
-    tag: "on the grid",
-    note: "Snaps onsets to the detected beats — honoured only when that grid is steady enough to move notes onto.",
-  },
-];
-
-export const modeLabel = (id: TimingMode): string =>
-  TIMING_MODES.find((m) => m.id === id)?.name ?? id;
