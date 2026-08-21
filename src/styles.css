@@ -684,18 +684,6 @@ input::placeholder {
   letter-spacing: -0.2px;
 }
 
-.close {
-  border: none;
-  background: transparent;
-  color: var(--faint);
-  font-size: 15px;
-  cursor: pointer;
-}
-
-.close:hover {
-  color: var(--ink);
-}
-
 .drop {
   display: flex;
   flex-direction: column;
