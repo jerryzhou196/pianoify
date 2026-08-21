@@ -966,9 +966,9 @@ input::placeholder {
   touch-action: none;
 }
 
-/* Only the slidable wave claims the gesture: when the whole file already fits
-   the window there is nothing to drag, and swallowing the swipe would just
-   leave a dead strip the page will not scroll past. */
+/* Only an adjustable wave claims the gesture: when the file is shorter than
+   the shortest clip there is nothing to drag, and swallowing the swipe would
+   just leave a dead strip the page will not scroll past. */
 .wave[data-slidable="1"] {
   cursor: grab;
   touch-action: none;
@@ -976,6 +976,13 @@ input::placeholder {
 
 .wave[data-slidable="1"]:active {
   cursor: grabbing;
+}
+
+/* An edge under the pointer is being stretched, not carried, and the cursor
+   is the only thing that says which before the window starts changing. */
+.wave[data-dragging="start"],
+.wave[data-dragging="end"] {
+  cursor: ew-resize;
 }
 
 .wave-bars {
@@ -1014,6 +1021,40 @@ input::placeholder {
 .wave-mask.right {
   right: 0;
   border-left: 2px solid var(--ink);
+}
+
+/* The two edges of the window, as something that looks pullable.
+ *
+ * Decoration only — `pointer-events: none`, because the strip underneath does
+ * the hit testing in pixels and a grip that swallowed the press would break
+ * the drag it is advertising. The 2px rule down the middle sits exactly on the
+ * mask's border, so the pair reads as one edge with a grip on it. */
+.wave-grip {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  /* Centred on the edge, and as wide as the hit zone in UploadModal.tsx. */
+  width: 14px;
+  margin-left: -7px;
+  pointer-events: none;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wave-grip::before {
+  content: "";
+  width: 2px;
+  height: 22px;
+  border-radius: 1px;
+  background: var(--ink);
+  opacity: 0.85;
+}
+
+.wave-grip[data-lit="1"]::before {
+  height: 100%;
+  opacity: 1;
 }
 
 .wave-head {
@@ -1112,13 +1153,15 @@ input::placeholder {
   white-space: nowrap;
 }
 
-/* On a phone the trim head has room for the button and the caption telling you
-   what to do with it, and not for the timecode as well. The readout is the
-   line to drop: the window it counts is drawn right below it, and the length
-   never changes — it is always the full clip — so the digits repeat what the
-   caption already said. */
+/* On a phone the trim head has room for the button and one line of type, not
+   two. It used to be the readout that went, back when the window was a fixed
+   ten seconds and the digits only repeated what the caption already said. Now
+   the length is the thing being chosen — and the thing being billed — so the
+   readout is the line that has to stay and the instructions are the ones that
+   go: the handles are visible, and a finger finds them faster than it reads
+   about them. */
 @media (max-width: 760px) {
-  .trim-head .readout {
+  .trim-head .caption {
     display: none;
   }
 }

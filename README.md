@@ -3,8 +3,9 @@
 Drop in a recording, hear it back as piano.
 
 Drop a file or paste a YouTube link. It is decoded in the tab, drawn as a
-waveform, and cropped to ten seconds — opening on the first thing you actually
-played. That crop goes to one of two transcribers — [Mirelo](https://mirelo.ai)'s
+waveform, and cropped by a window that opens ten seconds wide on the first
+thing you actually played — drag its edges out and it takes as much as the
+model will. That crop goes to one of two transcribers — [Mirelo](https://mirelo.ai)'s
 audio-to-MIDI API, or a rented GPU box running
 [MuScriptor](https://github.com/jerryzhou196/muscriptor), whichever the model
 picker in the header names — conditioned on `acoustic_piano`, which sends back
@@ -49,9 +50,12 @@ audio file, or a youtube link
    ↓                    through this origin so no CORS allowlist is involved
    ↓  audio.ts          decode in the browser; peaks for the waveform; open the
    ↓                    trim handles on the first ten non-silent seconds
-   ↓  (you drag)        the crop is cut to a mono 16-bit WAV
+   ↓  (you drag)        move it, stretch it; the crop is cut to a mono 16-bit WAV
    ↓
-   ├─ mirelo ─ POST /api/asset    → measured, capped at 10s, uploaded to Mirelo
+   ├─ mirelo ─ POST /api/asset    → the WAV's header: measured, capped at 10
+   │                                minutes, answered with a presigned URL
+   │           PUT  (that URL)    → the audio itself, straight to Mirelo's
+   │                                storage, no function in the way
    │           POST /api/job      → transcribes, conditioned on acoustic_piano
    │           GET  /api/job?id=… → polled: progress, and notes as decoded
    ├─ gpu ──── POST /gpu/transcribe
@@ -70,27 +74,64 @@ audio file, or a youtube link
 
 Mirelo's key is a bearer token against a billed account, and this is a static
 site, so there is nowhere in the browser to put one. `api/` is four small
-functions that hold it: take a clip, start a job, poll a job, quote a price.
+functions that hold it: measure a clip and open a slot, start a job, poll a
+job, quote a price.
 
-### Ten seconds, enforced where it counts
+### How long a clip can be
 
-Mirelo bills 2.5 credits per second of input, so the length of a clip is a
-number that costs money, and a cap the browser applies to itself is not a cap.
-Mirelo's asset flow would let the tab PUT straight to a presigned S3 URL —
-which is the right shape for large uploads, and is what this did first — but
-then nothing between the browser and the bill ever sees how long the audio is.
+Two different answers, because the two backends are two different bargains.
 
-So the clip comes through `/api/asset`, which parses the WAV header, works out
-the duration from the sample rate and the size of the data chunk, and refuses
-anything past ten seconds before it spends a slot. Ten seconds of mono PCM is
-under a megabyte; the detour costs nothing and the cap holds no matter what the
-client says. `src/config.ts` carries the same number so the trim handles never
-open on a crop that would only be rejected — that copy is a courtesy, not the
-limit.
+**Mirelo: ten minutes.** Not a number this app picked — its preflight refuses a
+`duration_ms` past 600000, so ten minutes is the longest transcription the API
+will quote or run. It still bills 2.5 credits per second, which makes a full
+one 1500 credits, so the length of a clip is a number that costs money and a
+cap the browser applies to itself is not a cap.
 
-### Where the clip starts
+**The box: no limit.** It is rented by the hour, charges nothing per clip, and
+transcribes in five-second chunks it streams as it decodes — so a long file
+costs proportionally more time and no more memory. Ten minutes of piano comes
+back in about six, with the first notes on the roll inside two seconds and the
+rest arriving the whole way through.
 
-At the first thing you played. Not the loudest window, and not the busiest one:
+### Measuring a clip without carrying it
+
+The cap has to hold somewhere the browser cannot reach around, and for a while
+that meant sending the audio through `/api/asset` so the function could look at
+it. Ten seconds of mono PCM is under a megabyte, so the detour cost nothing.
+
+Ten minutes is fifty megabytes, and a Vercel function refuses a request body
+past 4.5MB — about fifty seconds of one. So the detour is over. The audio goes
+from the tab straight to the presigned S3 URL Mirelo's asset flow hands out,
+which is the shape it was designed for; the bucket answers a browser preflight
+for PUT, so no function is in the way and nothing has to proxy fifty megabytes.
+
+What comes to `/api/asset` instead is the WAV's *header* — a couple of hundred
+bytes — and that turns out to be the whole measurement. A RIFF `data` chunk
+declares how many sample bytes follow, and with the sample rate and frame size
+from `fmt ` beside it that is the duration, exactly. It is not the browser's
+summary of the clip, which could say anything; it is the file's own statement
+of its length, and the decoder at the far end reads precisely that many bytes.
+Appending more audio past a header that declares ten minutes does not buy an
+eleventh — it produces a file every WAV reader stops ten minutes into. A
+streamed WAV can leave a placeholder size there instead, which measures
+nothing; those are refused rather than guessed at.
+
+`src/config.ts` carries the same ten minutes so the trim handles never stretch
+to a crop that would only be rejected — that copy is a courtesy, not the limit.
+
+### Where the clip starts, and how long it runs
+
+The window opens ten seconds wide, at the first thing you played.
+
+Ten, out of a possible six hundred, because it is the length worth being wrong
+about: a file dropped and transcribed without touching the waveform costs 25
+credits rather than 1500, and the minutes are one drag away for whoever goes
+looking for them. Both edges pull — the body of the window moves it, an edge
+stretches it — and how far the edges go is the model's business rather than the
+panel's, so switching the picker from the box to Mirelo pulls an over-long
+window back to ten minutes instead of waiting to be refused at the button.
+
+Where it opens is the older question, and the answer has not changed. Not the loudest window, and not the busiest one:
 either is a guess about which part of a recording matters, and a guess that
 lands in the middle of a track is one you have to check before you can trust
 it. "Not silence" is measured against the file's own loud passages, since a
@@ -101,9 +142,11 @@ long enough to be a sound rather than a click. Everything else is a drag away.
 ### Why async, and why nothing is blocked
 
 Transcription runs at roughly 1.5× realtime, so even a ten-second clip is
-fifteen seconds of waiting. The `/sync` endpoint would hold a function open for
-all of it and show nothing until it returned; the async endpoint reports
-`progress_percent` and hands back the notes decoded so far on every poll.
+fifteen seconds of waiting — and a ten-minute one is a quarter of an hour. The
+`/sync` endpoint would hold a function open for all of it, which past five
+minutes is longer than the platform allows, and show nothing until it returned;
+the async endpoint reports `progress_percent` and hands back the notes decoded
+so far on every poll.
 
 So the page does not wait. Notes are drawn as they land, the transport is live
 the moment there are any, and the only thing on screen that says a
@@ -147,9 +190,12 @@ Three entries, two backends, in `src/models.ts`, in the order they are offered:
 
 | | |
 |---|---|
-| **MuScriptor · GPU box** | the rented GPU, reached at `/gpu/*` — the default |
-| **Mirelo v1.0 · performance** | the hosted API, times as played |
+| **MuScriptor · GPU box** | the rented GPU, reached at `/gpu/*` — the default, and the one with no length limit |
+| **Mirelo v1.0 · performance** | the hosted API, times as played, ten minutes at a time |
 | **Mirelo v1.0 · quantized** | the same, onsets snapped to the detected beats |
+
+`maxSeconds` on each entry is what the trim handles stop at, which is why the
+cap lives in the model list rather than in the panel that draws them.
 
 The picker is in two places (`ModelPicker.tsx`, one component and one piece of
 state above it): the header, and the head of the upload modal. The modal's copy
@@ -273,7 +319,7 @@ than a drawing's approximation of it. `public/robots.txt` and
 | `api/` | the four functions that hold `MIRELO_KEY` |
 | `src/audio.ts` | decode, waveform, window selection, WAV encoding |
 | `src/models.ts` | the model picker's entries, and what both transcribers speak |
-| `src/mirelo.ts` | upload, submit, poll, and what Mirelo's shapes mean |
+| `src/mirelo.ts` | measure, upload, submit, poll, and what Mirelo's shapes mean |
 | `src/muscriptor.ts` | the GPU box: one POST, the SSE stream it answers with, and the engraving that follows |
 | `src/zip.ts` | one member out of a stored zip, so the engraving needs no zip library |
 | `src/chords.ts` | the chord service |

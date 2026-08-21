@@ -27,18 +27,27 @@ export const chordServiceEnabled =
 export const chordApi = (path: string) => CHORD_BASE + path;
 
 /**
- * The longest clip this app transcribes, in seconds.
+ * The longest clip Mirelo transcribes, in seconds.
  *
- * The real cap lives in `api/_mirelo.ts`, which measures the WAV it is handed
- * and refuses anything longer — the browser cannot be trusted with a limit
- * that costs money. This copy is what stops the trim handles from opening on a
- * crop that would only be rejected, and it must match the server's.
+ * The real cap lives in `api/_mirelo.ts`, which measures the WAV header it is
+ * handed and refuses anything longer — the browser cannot be trusted with a
+ * limit that costs money. This copy is what stops the trim handles from
+ * opening on a crop that would only be rejected, and it must match the
+ * server's.
+ *
+ * Ten minutes is Mirelo's own number, not one this app chose: its preflight
+ * refuses a longer duration outright. The GPU box has no equivalent — see
+ * `maxSeconds` in `src/models.ts`, which is where the two are told apart.
  */
-export const MAX_CLIP_SECONDS = 10;
+export const MAX_CLIP_SECONDS = 600;
 
-/** How long a crop the trim handles open on. The cap, since there is no room
- *  under it worth defaulting to. */
-export const CLIP_SECONDS = MAX_CLIP_SECONDS;
+/** How long a crop the trim handles open on, whatever the model would allow.
+ *
+ *  Ten seconds, still. The handles now stretch as far as the model will go,
+ *  but the length that costs the least to be wrong about is the one they open
+ *  on — a dropped file quotes 25 credits until someone widens it on purpose,
+ *  rather than 1500 because it happened to be an album track. */
+export const CLIP_SECONDS = 10;
 
 /**
  * The YouTube→audio service, which is self-hosted (yt-dlp behind FastAPI).
