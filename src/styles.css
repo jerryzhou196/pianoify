@@ -1002,4 +1002,13 @@ input::placeholder {
     animation: none;
     transform: scaleY(0.7);
   }
+
+  /* The loop behind the upload panel never stops and nobody asked for it, so
+     here it simply does not run. Hiding the layer rather than freezing it is
+     deliberate: a still frame of the roll is a column of rectangles hanging in
+     mid-air, which reads as a rendering fault rather than as restraint. The
+     keys still light, and the panel covers most of the roll regardless. */
+  .roll-layer.decorative {
+    display: none;
+  }
 }
