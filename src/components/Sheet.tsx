@@ -19,6 +19,17 @@ import { useEffect, useRef, useState } from "react";
  * most sessions never open this tab.
  */
 
+/** How large the notation is drawn, as a factor on OSMD's natural size.
+ *
+ *  The page is as wide as the reader's window, so this is the only thing
+ *  deciding how big a note actually looks: at the old 0.72 the score was
+ *  legible but small, a lot of thin staves stacked in a tall dark tab. 0.94 is
+ *  that scaled up by 30% — proportionally, so staves, note heads, stems and
+ *  the space between systems all grow together and the engraving keeps its
+ *  proportions. It also fits fewer bars on a line, so the score runs taller
+ *  than 30% overall; the tab scrolls, and bigger notes are the point. */
+const SCALE = 0.94;
+
 /**
  * Centre what was actually engraved on the page.
  *
@@ -102,7 +113,7 @@ export function Sheet({
         });
         await osmd.load(xml);
         if (cancelled) return;
-        osmd.zoom = 0.72;
+        osmd.zoom = SCALE;
 
         // Centre after every engraving, not just this one. OSMD re-renders on
         // its own when the window changes size — that reflow is the point of
