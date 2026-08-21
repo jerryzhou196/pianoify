@@ -4,11 +4,13 @@ Drop in a recording, hear it back as piano.
 
 Drop a file or paste a YouTube link. It is decoded in the tab, drawn as a
 waveform, and cropped to ten seconds — opening on the first thing you actually
-played. That crop goes to [Mirelo](https://mirelo.ai)'s audio-to-MIDI API,
-conditioned on `acoustic_piano`, which sends back the notes; the chords come
-from a CPU-only Hugging Face Space running BTC. The roll fills in while the
-model is still decoding, plays on a sampled Steinway grand with a short natural
-release, engraves Mirelo's MusicXML on a second tab, and crossfades against the
+played. That crop goes to one of two transcribers — [Mirelo](https://mirelo.ai)'s
+audio-to-MIDI API, or a rented GPU box running
+[MuScriptor](https://github.com/jerryzhou196/muscriptor), whichever the model
+picker in the header names — conditioned on `acoustic_piano`, which sends back
+the notes; the chords come from a CPU-only Hugging Face Space running BTC. The roll fills in while the
+model is still decoding, plays on a sampled Steinway grand with a working damper
+pedal, engraves Mirelo's MusicXML on a second tab, and crossfades against the
 original recording.
 
 ## Running it
@@ -33,9 +35,11 @@ A static Vite build plus four Node functions. `vercel.json` has the rest.
 2. Optionally set `VITE_CHORD_API_BASE` (see `.env.example`). It is inlined at
    build time, so changing it takes a redeploy, not just a settings save.
 3. Add the deployed origin to the chord Space's `ALLOWED_ORIGINS`, or the
-   chord request fails at the preflight. The yt-dlp service needs no such
-   change — `vercel.json` rewrites `/ytdlp/*` to it, so the browser only ever
-   talks to this origin.
+   chord request fails at the preflight. The yt-dlp service and the GPU box
+   need no such change — `vercel.json` rewrites `/ytdlp/*` and `/gpu/*` to
+   them, so the browser only ever talks to this origin. That is what lets the
+   GPU model work from a preview deployment, whose URL is different every time
+   and could never be on an allowlist ahead of it.
 
 ## How it works
 
@@ -47,9 +51,12 @@ audio file, or a youtube link
    ↓                    trim handles on the first ten non-silent seconds
    ↓  (you drag)        the crop is cut to a mono 16-bit WAV
    ↓
-   ├─ POST /api/asset      → measured, capped at 10s, uploaded to Mirelo
-   ├─ POST /api/job        → Mirelo transcribes, conditioned on acoustic_piano
-   ├─ GET  /api/job?id=…   → polled: progress, and notes as they are decoded
+   ├─ mirelo ─ POST /api/asset    → measured, capped at 10s, uploaded to Mirelo
+   │           POST /api/job      → transcribes, conditioned on acoustic_piano
+   │           GET  /api/job?id=… → polled: progress, and notes as decoded
+   ├─ gpu ──── POST /gpu/transcribe
+   │                              → rewritten to the box; answers with an SSE
+   │                                stream of notes and, at the end, the MIDI
    └─ POST /analyze  (HF)  → chords, in parallel, from a different machine
    ↓
    ↓  hands.ts          split the notes between the hands; put a finger on each
@@ -127,11 +134,46 @@ is exactly the point, and the split is toward the piano. Asking for
 `acoustic_piano` is what turns a drum kit into left-hand chords instead of into
 the General MIDI drum map played as pitches.
 
-`timing` is the other knob, and it is the app's whole model menu, because Mirelo
-publishes one audio-to-MIDI model. `performance` keeps the take as played;
+`timing` is Mirelo's other knob. `performance` keeps the take as played;
 `quantized` snaps onsets to the detected beats and is honoured only when that
 grid is steady enough to move notes onto — the sheet-music caption reports what
 was actually applied, and why, when the two differ.
+
+### The model picker
+
+Three entries, two backends, in `src/models.ts`, in the order they are offered:
+
+| | |
+|---|---|
+| **MuScriptor · GPU box** | the rented GPU, reached at `/gpu/*` — the default |
+| **Mirelo v1.0 · performance** | the hosted API, times as played |
+| **Mirelo v1.0 · quantized** | the same, onsets snapped to the detected beats |
+
+The picker is in two places (`ModelPicker.tsx`, one component and one piece of
+state above it): the header, and the head of the upload modal. The modal's copy
+is the one that matters — the modal cannot be dismissed, so until something has
+been transcribed the header is behind the scrim, and the choice of what does
+the transcribing has to be reachable before the file is, not after.
+
+The box leads the list and is what the picker opens on, because it costs
+nothing per clip. Reach for Mirelo when the sheet music is the point.
+
+Mirelo bills credits per second of input and engraves: the modal quotes a price
+before the button, and its MusicXML is what the sheet-music tab draws and the
+MusicXML export saves. The box costs nothing per clip because the instance is
+rented by the hour, streams its notes over SSE instead of being polled (they
+land on the roll a few hundred milliseconds after it decodes them), and writes
+MIDI but no MusicXML — so on that model the sheet tab and the MusicXML export
+stay disabled, and say why. Everything downstream — hands, fingering, pedal,
+chords, exports — is the same code either way, because both clients return the
+same `Transcription`.
+
+The box answers a browser only from the origins in its
+`MUSCRIPTOR_ALLOWED_ORIGINS`, so the app never calls it cross-origin: `/gpu/*`
+is a rewrite in `vercel.json` and a proxy in `vite.config.ts`, which makes
+every call same-origin to the browser and server-to-server to the box. Point
+`VITE_MUSCRIPTOR_API_BASE` at the box's hostname to skip the hop, from an
+origin it lists.
 
 ### The piano
 
@@ -184,7 +226,9 @@ service never turns a good transcription into an error.
 |---|---|
 | `api/` | the four functions that hold `MIRELO_KEY` |
 | `src/audio.ts` | decode, waveform, window selection, WAV encoding |
+| `src/models.ts` | the model picker's entries, and what both transcribers speak |
 | `src/mirelo.ts` | upload, submit, poll, and what Mirelo's shapes mean |
+| `src/muscriptor.ts` | the GPU box: one POST, and the SSE stream it answers with |
 | `src/chords.ts` | the chord service |
 | `src/links.ts` | pasted links: YouTube, and everything else |
 | `src/hands.ts` | hand splitting and fingering |
