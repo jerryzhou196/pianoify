@@ -13,13 +13,16 @@
  * So: read the WAV, measure it from its own header, refuse it if it is too
  * long, and only then spend a slot and the bytes.
  */
-import { ApiError, MAX_CLIP_SECONDS, json, mirelo, readBody, route, wavSeconds } from "./_mirelo";
+import { ApiError, MAX_CLIP_SECONDS, json, mirelo, readBody, route, wavSeconds } from "./_mirelo.js";
 
 /** Ten seconds of 16-bit PCM is ~880KB mono at 44.1k, ~1.9MB stereo at 48k.
  *  Eight leaves room for a high sample rate and nothing else. */
 const MAX_BYTES = 8 * 1024 * 1024;
 
-export const config = { api: { bodyParser: false } };
+/** The clip is small, but it still has to reach Mirelo's storage from here.
+ *  Sixty seconds is far more than that upload has ever needed and far less
+ *  than the platform would otherwise allow it to sit for. */
+export const config = { maxDuration: 60 };
 
 export default route({
   POST: async (req, res) => {
