@@ -1,46 +1,36 @@
-import { hz } from "./roll";
-import type { BeatGrid, Chord, Note } from "./types";
+import { SplendidGrandPiano, type Smplr, type StopFn } from "smplr";
+import type { Note } from "./types";
 
 /**
- * The piano.
+ * Playback for the transcription and the original recording.
  *
- * Everything here is synthesized rather than sampled, on purpose: a sampled
- * grand means a ~38MB soundfont over the wire before the first note sounds,
- * and this page's whole promise is that you drop a file in and hear it back.
- * What a synthesized piano usually gets wrong is not the tone, it is the
- * *decay* — one exponential per note, no dampers, no pedal — which is exactly
- * what makes a transcription sound like a music box. So the decay is where the
- * work went:
- *
- *   - each note is a stack of inharmonic partials, each with its own decay
- *     rate, so the tone thins as it rings instead of fading uniformly;
- *   - a damper falls when the key is released — unless the pedal is down, in
- *     which case the string rings on until the pedal comes up at the next
- *     chord change, the way a pianist re-pedals on the harmony;
- *   - the strings that aren't damped are fed a little of everything else
- *     through a soundboard, which is what a pedalled piano actually sounds
- *     like and what a per-note envelope can never produce.
+ * The piano side is a compact multisample rather than a bank of oscillators:
+ * thirteen Steinway pitches at two touch levels, with the nearest recording
+ * transposed by at most four semitones to cover all 88 keys. The samples are
+ * public-domain Splendid Grand Piano recordings, loaded by `smplr` while the
+ * upload panel is open. A short release leaves a little natural sustain after
+ * each key comes up without washing one chord into the next.
  */
 
 /** How far ahead of the clock notes are handed to WebAudio. Long enough that a
- *  slow frame can't make a note late, short enough that a seek doesn't have to
- *  unpick much. */
+ * slow frame cannot make a note late, short enough that a seek has little
+ * scheduled work to cancel. */
 const HORIZON = 0.35;
 
-export type Pedal = "off" | "on";
+/** The audible tail after a key release. */
+const RELEASE_SECONDS = 0.42;
 
-/** Seconds a damper takes to stop a string. Felt on wire is quick, but not
- *  instant — an abrupt cut sounds like a gate, not a piano. */
-const DAMP_TIME = 0.16;
+/** Sampled notes need a little more bus level than a mastered recording; the
+ * limiter below catches the rare dense peak this extra gain creates. */
+const TRANSCRIBED_GAIN = 1.5;
 
-/** How much soundboard the pedal opens up. With the dampers down the other
- *  strings are dead and there is nothing to resonate. */
-const RESONANCE: Record<Pedal, number> = { off: 0.05, on: 0.28 };
+/** Sparse roots from the Splendid Grand Piano set. Adjacent roots are no more
+ * than eight semitones apart, so every played note stays close to a recording. */
+const SAMPLE_ROOTS = [23, 31, 38, 45, 52, 59, 67, 74, 81, 89, 97, 105, 107];
+const SAMPLE_VELOCITY_RANGE: [number, number] = [68, 100];
 
 interface Voice {
-  stop(at: number, damp: number): void;
-  /** When every partial has gone quiet on its own, so the scheduler can forget
-   *  about a voice it will never have to damp. */
+  stop: StopFn;
   readonly until: number;
 }
 
@@ -49,7 +39,12 @@ export class Engine {
   private master!: GainNode;
   private pianoBus!: GainNode;
   private originalBus!: GainNode;
-  private boardSend!: GainNode;
+  private piano!: Smplr;
+  private pianoReady: Promise<void> | null = null;
+  private pianoAvailable = false;
+  /** Keeps a superseded development-mode preload from marking a newer piano
+   * ready after Strict Mode has disposed and recreated the audio graph. */
+  private pianoGeneration = 0;
 
   private notes: Note[] = [];
   private noteCursor = 0;
@@ -61,45 +56,32 @@ export class Engine {
   private origin = 0;
   private pausedAt = 0;
   private live: Voice[] = [];
+  private voiceId = 0;
+  /** Invalidates a play request that is waiting for the samples. */
+  private playRequest = 0;
 
-  private pedal: Pedal = "on";
-  /** Times the pedal comes up, with the dampers landing on everything still
-   *  ringing. See `setChords` and `nextLift`. */
-  private lifts: number[] = [];
-  private grid: BeatGrid | null = null;
   /** 0 = original recording only, 1 = piano only. */
   private mix = 0.72;
-  /** Playback speed. 1 is as transcribed; everything scheduled is divided by
-   *  it, and the recording is resampled by it — which shifts the recording's
-   *  pitch, the way slowing a tape does. The piano does not shift, because its
-   *  notes are re-synthesized at the pitch they were written at, so at 0.5×
-   *  the transcription stays in tune and the recording under it does not. That
-   *  is the honest trade for a control whose job is to let you follow a fast
-   *  passage, and it is why the crossfade usually wants to be on the piano
-   *  side when this is not 1. */
+  /** Playback speed. The recording is resampled, while piano samples retain
+   * their written pitch and only their timing is stretched. */
   private rate = 1;
   duration = 0;
   playing = false;
 
   /* ── graph ─────────────────────────────────────────────────────────────── */
 
-  /** The AudioContext, created on first use. Browsers hand out a suspended one
-   *  outside a gesture, so this is safe to call from anywhere; `resume()` is
-   *  what needs the click. */
+  /** Create the graph once and begin fetching the piano samples. The context
+   * may remain suspended until a user gesture, but it can decode samples in
+   * the meantime. */
   private audio(): AudioContext {
     if (this.ctx) return this.ctx;
     const ctx = new AudioContext();
     this.ctx = ctx;
+    this.pianoAvailable = false;
+    const generation = ++this.pianoGeneration;
 
-    // A limiter across the output, and headroom in front of it.
-    //
-    // A piano with the pedal down is an additive instrument: sixty ringing
-    // strings sum, and a dense passage measured well past full scale before
-    // this was here. Setting the gain low enough that the worst case never
-    // clips would make everything else too quiet, so instead there is a fast,
-    // high-ratio limiter that only ever engages on the peaks — and enough
-    // headroom in front of it that it stays out of the way the rest of the
-    // time, rather than compressing the life out of every note.
+    // A fast limiter catches the sum of dense sampled chords without turning
+    // normal passages into compressed audio.
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -3;
     limiter.knee.value = 0;
@@ -112,34 +94,49 @@ export class Engine {
     this.master.gain.value = 0.62;
     this.master.connect(limiter);
 
-    // The soundboard: one shared convolver every ringing string leaks into.
-    // Per-note reverb would be wrong as well as expensive — the resonance of a
-    // pedalled piano is the *other* strings answering, so it has to be shared.
-    const board = ctx.createConvolver();
-    board.buffer = soundboardImpulse(ctx);
-    const boardOut = ctx.createGain();
-    boardOut.gain.value = 1;
-    board.connect(boardOut);
-    boardOut.connect(this.master);
-    this.boardSend = ctx.createGain();
-    this.boardSend.connect(board);
-
     this.pianoBus = ctx.createGain();
     this.pianoBus.connect(this.master);
-    this.pianoBus.connect(this.boardSend);
 
     this.originalBus = ctx.createGain();
     this.originalBus.connect(this.master);
 
+    this.piano = SplendidGrandPiano(ctx, {
+      destination: this.pianoBus,
+      decayTime: RELEASE_SECONDS,
+      volume: 127,
+      notesToLoad: {
+        notes: SAMPLE_ROOTS,
+        velocityRange: SAMPLE_VELOCITY_RANGE,
+      },
+    });
+    this.pianoReady = this.piano.ready.then(
+      () => {
+        if (generation === this.pianoGeneration) this.pianoAvailable = true;
+      },
+      (error) => {
+        if (generation !== this.pianoGeneration) return;
+        // Playback stays stopped if the sample host is unavailable. Logging
+        // the original failure is more useful than a later missing-buffer
+        // error for every scheduled note.
+        console.error("could not load the sampled piano", error);
+      },
+    );
+
     this.applyMix();
-    this.applyPedal();
     return ctx;
   }
 
-  /** Resume the context. Must be called from inside a user gesture. */
+  /** Start loading samples before playback is requested. */
+  prepare(): void {
+    this.audio();
+  }
+
+  /** Resume WebAudio and wait until all sample roots are decoded. `resume()`
+   * is called before the first await so it remains inside the user gesture. */
   async unlock(): Promise<void> {
     const ctx = this.audio();
-    if (ctx.state === "suspended") await ctx.resume();
+    const resumed = ctx.state === "suspended" ? ctx.resume() : Promise.resolve();
+    await Promise.all([resumed, this.pianoReady]);
   }
 
   private applyMix() {
@@ -147,19 +144,10 @@ export class Engine {
     const t = this.ctx.currentTime;
     // Without a decoded recording there is nothing to fade against, so the
     // piano goes to full rather than sitting at whatever the slider says.
-    const piano = this.buffer ? this.mix : 1;
+    const piano = (this.buffer ? this.mix : 1) * TRANSCRIBED_GAIN;
     const original = this.buffer ? 1 - this.mix : 0;
     this.pianoBus.gain.setTargetAtTime(piano, t, 0.02);
     this.originalBus.gain.setTargetAtTime(original, t, 0.02);
-  }
-
-  private applyPedal() {
-    if (!this.ctx) return;
-    this.boardSend.gain.setTargetAtTime(
-      RESONANCE[this.pedal],
-      this.ctx.currentTime,
-      0.05,
-    );
   }
 
   setMix(mix: number) {
@@ -167,44 +155,14 @@ export class Engine {
     this.applyMix();
   }
 
-  /** Change pedal position. Notes already sounding keep the damping they were
-   *  scheduled with — lifting the pedal mid-note would have to re-damp every
-   *  live voice, and the honest version of that is to hear it from the next
-   *  note on, which is also what a real pedal change sounds like on a roll
-   *  that is already ringing. */
-  setPedal(pedal: Pedal) {
-    this.pedal = pedal;
-    this.applyPedal();
-  }
-
   /* ── material ──────────────────────────────────────────────────────────── */
 
-  /** The detected tempo map, used to re-pedal on the bar when there is no
-   *  chord track to re-pedal on instead. */
-  setGrid(grid: BeatGrid | null) {
-    this.grid = grid;
-  }
-
-  /** Replace the transcription. Safe mid-playback: the cursor is re-seeked, so
-   *  notes that stream in while the roll is already rolling get picked up. */
+  /** Replace the transcription. Safe mid-playback: the cursor is re-seeked,
+   * so notes that stream in while the roll is moving get picked up. */
   setNotes(notes: Note[], duration: number) {
     this.notes = notes;
     this.duration = Math.max(duration, this.buffer?.duration ?? 0);
     if (this.playing) this.reseek();
-  }
-
-  /** Take the chord track — not to play it, but to pedal on it.
-   *
-   *  Nothing here sounds a chord. The harmony is drawn on the roll and named in
-   *  the transport, and the one thing it does to the audio is decide where the
-   *  damper pedal comes up. */
-  setChords(chords: Chord[]) {
-    // Every chord change is a pedal change. A pianist does not hold the
-    // damper pedal down for fifteen seconds; they re-pedal on the harmony,
-    // which is the only thing that lets a pedalled passage stay pedalled
-    // without turning into a chord of everything played so far. With no chord
-    // track there is nothing to re-pedal against, and the strings ring free.
-    this.lifts = chords.map((c) => c.time).filter((t) => t > 0);
   }
 
   /** Hand over the decoded clip so it can be crossfaded against the piano. */
@@ -221,17 +179,12 @@ export class Engine {
     return Math.max(0, (this.ctx.currentTime - this.origin) * this.rate);
   }
 
-  /** Context time a piece-time position falls at. Every scheduling decision
-   *  goes through here, which is all `rate` has to touch: the piece is laid out
-   *  in its own seconds and stretched onto the clock exactly once. */
+  /** Context time a piece-time position falls at. */
   private clockTime(position: number): number {
     return this.origin + position / this.rate;
   }
 
-  /** Change playback speed, keeping the current position. Notes already handed
-   *  to WebAudio keep the speed they were scheduled at, so the change is heard
-   *  from the next note on — which is why everything ringing is stopped and
-   *  re-seeked rather than left to finish at the old rate. */
+  /** Change playback speed while keeping the current position. */
   setSpeed(rate: number) {
     const next = Math.max(0.25, Math.min(2, rate));
     if (next === this.rate) return;
@@ -248,15 +201,15 @@ export class Engine {
     this.pump();
   }
 
-  play() {
+  async play(): Promise<void> {
     if (this.playing) return;
+    const request = ++this.playRequest;
     const ctx = this.audio();
-    void this.unlock();
-    // Starting from the very end is a replay, not a no-op — otherwise `play`
-    // does nothing at all once a clip has run out.
+    await this.unlock();
+    if (request !== this.playRequest || this.playing || !this.pianoAvailable) return;
+
+    // Starting from the very end is a replay, not a no-op.
     if (this.pausedAt >= this.duration - 0.05) this.pausedAt = 0;
-    // A beat of headroom so the first notes are scheduled ahead of the clock
-    // rather than fired the instant they are seen.
     this.origin = ctx.currentTime - this.pausedAt / this.rate + 0.08;
     this.playing = true;
     this.reseek();
@@ -266,6 +219,7 @@ export class Engine {
   }
 
   pause() {
+    this.playRequest++;
     if (!this.playing) return;
     this.pausedAt = Math.min(this.position, this.duration);
     this.playing = false;
@@ -286,21 +240,22 @@ export class Engine {
     }
   }
 
-  /** Sound a single note now — the keyboard's click handler. Nothing to do
-   *  with the transport, so it works while stopped, and it is deliberately
-   *  exempt from the pedal lifts: those belong to the piece's timeline, and a
-   *  key pressed by hand is not on it. Pressing a key with the pedal down and
-   *  hearing it ring is the whole point of having the control. */
-  strike(midi: number, dur = 0.9) {
+  /** Sound one sampled key outside the transport. */
+  async strike(midi: number, dur = 0.9): Promise<void> {
     const ctx = this.audio();
-    void this.unlock();
-    this.spawn(midi, ctx.currentTime + 0.005, dur, 0.9, this.pianoBus, false, true);
+    await this.unlock();
+    if (!this.pianoAvailable) return;
+    this.spawn(midi, ctx.currentTime + 0.005, dur, 0.9);
   }
 
   /** Release everything and drop the context. */
   dispose() {
+    this.playRequest++;
+    this.pianoGeneration++;
+    this.pianoAvailable = false;
     this.stopTimers();
     this.silence();
+    this.piano?.dispose();
     void this.ctx?.close();
     this.ctx = null;
     this.playing = false;
@@ -311,25 +266,22 @@ export class Engine {
     this.pumpTimer = null;
   }
 
-  /** Cut every ringing string and stop the recording. Used on pause and seek,
-   *  where letting the old notes ring on over the new position would be wrong
-   *  however pretty it sounds. */
+  /** Stop every sampled voice and the original recording on pause or seek. */
   private silence() {
     const now = this.ctx?.currentTime ?? 0;
-    for (const v of this.live) v.stop(now, 0.06);
+    for (const voice of this.live) voice.stop(now);
     this.live = [];
     if (this.source) {
       try {
         this.source.stop();
       } catch {
-        // Already stopped — a source that ran to its end throws here.
+        // Already stopped at the end of its buffer.
       }
       this.source = null;
     }
   }
 
-  /** Move both cursors to the current position, so `pump` resumes from there
-   *  instead of replaying the notes it has already handed out. */
+  /** Move the note cursor to the current position. */
   private reseek() {
     const at = this.position;
     this.noteCursor = 0;
@@ -346,237 +298,73 @@ export class Engine {
     const src = ctx.createBufferSource();
     src.buffer = this.buffer;
     src.connect(this.originalBus);
-    // Resampling, not time-stretching: at half speed the recording drops an
-    // octave. See `rate`.
+    // Resampling, not time-stretching: slower recording playback drops pitch;
+    // the separately triggered piano samples retain their written pitches.
     src.playbackRate.value = this.rate;
-    // (when, offset): the recording is placed against the same origin the notes
-    // are, which is the only thing keeping the two in sync.
     src.start(this.clockTime(offset), offset);
     this.source = src;
   }
 
-  /** Hand WebAudio everything that starts in the next `HORIZON` seconds. */
+  /** Hand WebAudio every note beginning inside the scheduling horizon. */
   private pump() {
     if (!this.playing || !this.ctx) return;
     const ctx = this.ctx;
     const until = ctx.currentTime + HORIZON;
 
     while (this.noteCursor < this.notes.length) {
-      const n = this.notes[this.noteCursor];
-      const at = this.clockTime(n.time);
+      const note = this.notes[this.noteCursor];
+      const at = this.clockTime(note.time);
       if (at >= until) break;
       this.noteCursor++;
-      // The sounding length is stretched with everything else — a note played
-      // at half speed is held twice as long, and decays over twice as long.
       this.spawn(
-        n.midi,
+        note.midi,
         Math.max(ctx.currentTime, at),
-        n.dur / this.rate,
-        n.vel,
-        this.pianoBus,
+        note.dur / this.rate,
+        note.vel,
       );
     }
 
     const now = ctx.currentTime;
-    this.live = this.live.filter((v) => v.until > now);
+    this.live = this.live.filter((voice) => voice.until > now);
 
-    // Let the last notes ring out past the end of the clip before stopping —
-    // cutting the transport at `duration` would chop the final chord.
-    if (this.position > this.duration + 1.2) {
+    // Leave enough room for the final sample release before resetting.
+    if (this.position > this.duration + RELEASE_SECONDS + 0.4) {
       this.pause();
       this.pausedAt = 0;
     }
   }
 
-  /* ── voice ─────────────────────────────────────────────────────────────── */
-
-  /**
-   * One struck string.
-   *
-   * The partials are inharmonic — a real string is stiff, so its nth partial
-   * sits above `n·f0` by a factor that grows with n. Without it an additive
-   * stack sounds like an organ; with it, it sounds struck. Each partial also
-   * decays faster than the one below it, which is what gives a piano its
-   * characteristic thinning from a bright attack into a pure, slow tail.
-   */
-  private spawn(
-    midi: number,
-    at: number,
-    dur: number,
-    vel: number,
-    bus: GainNode,
-    soft = false,
-    /** Ignore the pedal lifts — this note is not on the piece's timeline. */
-    free = false,
-  ): void {
-    const ctx = this.audio();
-    const f0 = hz(midi);
-    const amp = (soft ? 0.5 : 1) * vel * gainFor(midi);
-
-    const voice = ctx.createGain();
-    voice.gain.value = 1;
-    voice.connect(bus);
-
-    // Seconds to inaudibility with nothing damping the string. Bass strings
-    // are long and heavy and ring for the better part of a minute; the top
-    // octave is over in a second or two. This single number is most of what
-    // makes a synthesized piano read as a piano rather than an organ with a
-    // fade-out, and the values are roughly what a real grand measures.
-    const ring = 26 * Math.pow(2, -(midi - 21) / 22) + 0.5;
-    // Fewer partials up top: above about 4kHz they are inaudible individually
-    // and only cost CPU, and a high note has fewer of them to begin with.
-    const count = midi < 52 ? 9 : midi < 72 ? 6 : 4;
-    const B = 0.00008 * Math.pow(2, (midi - 60) / 16);
-
-    let last = at;
-    for (let n = 1; n <= count; n++) {
-      const freq = f0 * n * Math.sqrt(1 + B * n * n);
-      if (freq > ctx.sampleRate / 2.2) break;
-      // 1/n² would be a plucked string; a hammer excites the low partials much
-      // more strongly than that, and the softer the blow the more so.
-      const level = amp * Math.pow(n, soft ? -2.1 : -1.55) * (n === 1 ? 1 : 0.85);
-      const tau = (ring / Math.pow(n, 0.62)) * (soft ? 1.15 : 1);
-      const osc = ctx.createOscillator();
-      osc.frequency.value = freq;
-      // A hair of detune per partial: two strings per note on a real piano are
-      // never in perfect unison, and that beating is most of the warmth.
-      osc.detune.value = (n - 1) * (Math.random() * 2 - 1) * 1.6;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      // Higher partials speak a moment later than the fundamental — the hammer
-      // takes time to leave the string.
-      const attack = soft ? 0.05 : 0.004 + n * 0.0012;
-      g.gain.linearRampToValueAtTime(level, at + attack);
-      const end = at + attack + tau;
-      g.gain.exponentialRampToValueAtTime(level * 0.001, end);
-      osc.connect(g);
-      g.connect(voice);
-      osc.start(at);
-      osc.stop(end + 0.05);
-      last = Math.max(last, end);
-    }
-
-    if (!soft) this.hammer(voice, at, midi, vel);
-
-    // The damper.
-    //
-    // With the pedal up it falls when the key is released, and the note lasts
-    // as long as the transcription says the key was held. With the pedal down
-    // the key release does nothing at all and the string keeps ringing — until
-    // the next pedal lift, which is the next chord change. That is what makes
-    // this a pedal rather than just a long release: notes bleed across the
-    // harmony they belong to and stop at its edge.
-    const release = at + Math.max(0.05, dur);
-    const held = this.pedal === "on";
-    const cut = held ? (free ? Infinity : this.nextLift(release)) : release;
-    const stop = (when: number, over: number) => {
-      const t = Math.max(ctx.currentTime, when);
-      voice.gain.cancelScheduledValues(t);
-      voice.gain.setValueAtTime(voice.gain.value, t);
-      voice.gain.exponentialRampToValueAtTime(0.0001, t + over);
-    };
-    if (cut < last) stop(cut, DAMP_TIME);
-
-    const until = Math.min(last, cut + DAMP_TIME);
-    this.live.push({ until, stop });
+  /** Trigger the nearest real recording and let its release envelope provide
+   * the small amount of sustain. */
+  private spawn(midi: number, at: number, dur: number, velocity: number): void {
+    const sounding = Math.max(0.05, dur);
+    const stop = this.piano.start({
+      note: midi,
+      time: at,
+      duration: sounding,
+      velocity: sampleVelocity(velocity),
+      ampRelease: RELEASE_SECONDS,
+      stopId: ++this.voiceId,
+    });
+    this.live.push({ stop, until: at + sounding + RELEASE_SECONDS });
     this.cap();
   }
 
-  /**
-   * Context time of the first pedal lift after `after`.
-   *
-   * Nobody holds a damper pedal down for fifteen seconds. A pianist re-takes
-   * it constantly, and *where* they re-take it is the musical judgement: on
-   * the harmony if there is one, otherwise on the bar, and failing both at
-   * roughly the rate a moderate tempo would suggest. All three are the same
-   * idea — the pedal is periodically lifted, and everything still ringing is
-   * damped when it is — which is what keeps a pedalled passage pedalled
-   * instead of accumulating into a chord of the whole piece.
-   *
-   * Past the last lift it returns a time beyond the clip, so the closing
-   * chord rings out on its own rather than being cut off.
-   */
-  private nextLift(after: number): number {
-    // A hair of slack: a note struck exactly on the change belongs to the
-    // chord it opens, not to the one it just ended.
-    const at = (after - this.origin) * this.rate + 0.02;
-    if (this.lifts.length) {
-      for (const t of this.lifts) if (t > at) return this.clockTime(t);
-      return this.clockTime(this.duration + 8);
-    }
-    const bar =
-      this.grid && this.grid.bpm > 0
-        ? (60 / this.grid.bpm) * (this.grid.beatsPerBar || 4)
-        : 2;
-    const phase = this.grid?.firstDownbeat ?? 0;
-    return this.clockTime(phase + (Math.floor((at - phase) / bar) + 1) * bar);
-  }
-
-  /** Ceiling on simultaneous ringing strings.
-   *
-   *  A real piano has 88 and a pedalled passage genuinely uses most of them,
-   *  but each one here is a handful of oscillators, and a dense transcription
-   *  with the pedal down can stack faster than they retire. Past the cap the
-   *  oldest voices are damped early — the same thing that happens acoustically
-   *  when the first notes of a pedalled run have faded under the later ones. */
+  /** Bound simultaneous sample voices during dense overlapping passages. */
   private cap() {
-    const MAX = 120;
-    if (this.live.length <= MAX) return;
+    const MAX_VOICES = 96;
+    if (this.live.length <= MAX_VOICES) return;
     const now = this.audio().currentTime;
-    for (const v of this.live.splice(0, this.live.length - MAX)) v.stop(now, 0.25);
-  }
-
-  /** The knock of felt on wire — a few milliseconds of filtered noise. Without
-   *  it every note starts out of nowhere; with it, something hits something. */
-  private hammer(dest: GainNode, at: number, midi: number, vel: number) {
-    const ctx = this.audio();
-    const len = Math.floor(ctx.sampleRate * 0.012);
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+    for (const voice of this.live.splice(0, this.live.length - MAX_VOICES)) {
+      voice.stop(now);
     }
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    const bp = ctx.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = Math.min(6000, hz(midi) * 5);
-    bp.Q.value = 0.7;
-    const g = ctx.createGain();
-    g.gain.value = 0.05 * vel * gainFor(midi);
-    src.connect(bp);
-    bp.connect(g);
-    g.connect(dest);
-    src.start(at);
   }
 }
 
-/** Equal-loudness trim. The ear is far less sensitive down low, but a bass
- *  note also has far more energy in its partials, so the two do not cancel —
- *  left flat, the bass swamps everything. */
-function gainFor(midi: number): number {
-  return midi < 48 ? 0.2 : midi < 72 ? 0.15 : 0.11;
-}
-
-/**
- * The soundboard, as a short impulse response.
- *
- * Noise shaped by an exponential decay, with the very start left quiet — a
- * soundboard answers a fraction of a beat after the string, not with it. It is
- * not a room: at ~1.1s and mixed low it reads as the body of the instrument,
- * which is the point. Anything longer starts sounding like a hall.
- */
-function soundboardImpulse(ctx: AudioContext): AudioBuffer {
-  const len = Math.floor(ctx.sampleRate * 1.1);
-  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
-  for (let c = 0; c < 2; c++) {
-    const d = buf.getChannelData(c);
-    for (let i = 0; i < len; i++) {
-      const t = i / len;
-      // Ramp in over the first 8ms so the dry signal isn't just doubled.
-      const onset = Math.min(1, i / (ctx.sampleRate * 0.008));
-      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.8) * onset * 0.6;
-    }
-  }
-  return buf;
+/** Keep note events inside the two loaded touch layers while preserving the
+ * transcription's relative dynamics. */
+function sampleVelocity(velocity: number): number {
+  const normalized = Math.max(0, Math.min(1, velocity));
+  const [low, high] = SAMPLE_VELOCITY_RANGE;
+  return Math.round(low + normalized * (high - low));
 }
