@@ -7,15 +7,18 @@ import type { BeatGrid, Note, Timing, Transcription } from "./types";
  * and the only one that engraves. The other is the GPU box in
  * `src/muscriptor.ts`; both speak the vocabulary in `src/models.ts`.
  *
- * Two hops, neither of which carries the API key:
+ * Three hops, none of which carries the API key:
  *
- *   1. `/api/asset` takes the crop itself, measures it, refuses it if it runs
- *      past ten seconds, and uploads it to Mirelo's storage. The clip could go
- *      straight from the tab to a presigned S3 URL instead — but then nothing
- *      between here and Mirelo would ever see how long it is, and the cap has
- *      to hold somewhere the browser cannot reach around. Ten seconds of mono
- *      PCM is under a megabyte, so the detour costs nothing.
- *   2. `/api/job` starts the transcription and is then polled. Mirelo's async
+ *   1. `/api/asset` is handed the crop's WAV *header* — a couple of hundred
+ *      bytes — measures the clip from the length the file declares for itself,
+ *      refuses it if it runs past ten minutes, and answers with the asset id
+ *      and a presigned URL. The audio does not go through it: ten minutes is
+ *      fifty megabytes and a Vercel function refuses a body past 4.5MB, which
+ *      is about fifty seconds of one.
+ *   2. That presigned URL, PUT to directly from the tab. It is a capability
+ *      scoped to one upload of one asset, and the bucket answers a browser
+ *      preflight for it, so the bytes never touch a function.
+ *   3. `/api/job` starts the transcription and is then polled. Mirelo's async
  *      endpoint reports `progress_percent` and hands back the notes decoded so
  *      far, which is what fills the roll in while the model is still working.
  *
@@ -29,9 +32,13 @@ import type { BeatGrid, Note, Timing, Transcription } from "./types";
  *  the roll gains a visible batch of notes about that often. */
 const POLL_MS = 1200;
 
-/** Give up on a job that never reaches a terminal state. Ten minutes is far
- *  past the estimate for any crop this app will send. */
-const POLL_TIMEOUT_MS = 10 * 60 * 1000;
+/** Give up on a job that never reaches a terminal state.
+ *
+ *  Mirelo's own quote for a ten-minute clip — the longest it takes — is about
+ *  three minutes, and it is the estimate rather than the audio that this has
+ *  to clear. Twenty minutes is comfortably past the worst of them and still
+ *  short enough that a job which has silently died is noticed. */
+const POLL_TIMEOUT_MS = 20 * 60 * 1000;
 
 export async function transcribe(
   file: File,
@@ -115,7 +122,7 @@ async function poll(
     if (Array.isArray(partial) && partial.length) handlers.onNotes?.(readNotes(partial));
 
     if (Date.now() > deadline) {
-      throw new TranscribeError("that transcription is taking longer than ten minutes — giving up");
+      throw new TranscribeError("that transcription is taking longer than twenty minutes — giving up");
     }
     await sleep(POLL_MS, signal);
   }
@@ -227,14 +234,20 @@ function readTiming(result: any): Timing {
 
 /* ── plumbing ────────────────────────────────────────────────────────────── */
 
+/** One of this site's own functions. `body` is JSON; `raw` is a blob sent as
+ *  `audio/wav`, which only the WAV header uses. */
 async function api<T>(
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: { method?: string; body?: unknown; raw?: Blob; signal?: AbortSignal } = {},
 ): Promise<T> {
   const resp = await fetch(path, {
     method: init.method ?? "GET",
-    headers: init.body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    headers: init.raw
+      ? { "Content-Type": "audio/wav" }
+      : init.body === undefined
+        ? undefined
+        : { "Content-Type": "application/json" },
+    body: init.raw ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
     signal: init.signal,
   });
   const body = await resp.json().catch(() => null);
@@ -244,38 +257,73 @@ async function api<T>(
   return body as T;
 }
 
-/** Send the crop to `/api/asset`, reporting how much of it has gone.
+/**
+ * How much of the WAV to show `/api/asset` so it can measure the clip.
  *
- *  XHR rather than `fetch`: upload progress is the one thing `fetch` still
- *  cannot report. Under a megabyte this is usually instant, but on a bad
- *  connection it is the only part of the wait that has a number attached. */
-function upload(
+ * This app's own encoder writes a 44-byte header and then samples, so in
+ * practice the answer is 44 — but a WAV can carry `LIST`/`INFO` chunks ahead
+ * of `data`, and 32KB walks past any of them without being enough of the file
+ * to be worth calling an upload. The server refuses anything past 128KB.
+ */
+const HEADER_BYTES = 32 * 1024;
+
+/**
+ * Open a slot for the crop, then PUT the crop into it.
+ *
+ * Two requests, because they go to two different places for two different
+ * reasons. The header goes to this site's own function, which is where the
+ * length is checked and where the API key lives. The audio goes straight to
+ * Mirelo's storage on the presigned URL that function hands back — a
+ * capability scoped to one PUT, which is why it is safe for the tab to hold
+ * one, and which is the only way a fifty-megabyte clip gets there at all: a
+ * Vercel function refuses a request body past 4.5MB.
+ *
+ * The reported progress is the PUT, not the header. The header is two hundred
+ * bytes and a round trip; the audio is the wait.
+ */
+async function upload(
   file: File,
   onProgress: (fraction: number) => void,
   signal?: AbortSignal,
 ): Promise<{ asset_id: string; seconds: number }> {
+  const slot = await api<{ asset_id: string; upload_url: string; seconds: number }>(
+    "/api/asset",
+    { method: "POST", raw: file.slice(0, HEADER_BYTES), signal },
+  );
+
+  await put(slot.upload_url, file, onProgress, signal);
+  return slot;
+}
+
+/** PUT the clip at a presigned URL, reporting how much of it has gone.
+ *
+ *  XHR rather than `fetch`: upload progress is the one thing `fetch` still
+ *  cannot report, and at ten minutes of PCM it is most of what the transcribe
+ *  overlay has to say for the first minute. No `Authorization` header — the
+ *  signature is in the URL, and S3's preflight allows `content-type` and
+ *  nothing else, so adding one would fail the preflight rather than the PUT. */
+function put(
+  url: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/asset");
+    xhr.open("PUT", url);
     xhr.setRequestHeader("Content-Type", "audio/wav");
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     };
     xhr.onload = () => {
-      let body: any = null;
-      try {
-        body = JSON.parse(xhr.responseText);
-      } catch {
-        // Not JSON: a proxy or platform error page.
-      }
-      if (xhr.status >= 200 && xhr.status < 300 && body?.asset_id) {
+      if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(1);
-        resolve(body);
+        resolve();
       } else {
-        reject(new TranscribeError(body?.error ?? `the upload was refused (${xhr.status})`, xhr.status));
+        reject(new TranscribeError(`storage refused the clip (${xhr.status})`, xhr.status));
       }
     };
-    xhr.onerror = () => reject(new TranscribeError("the upload could not reach the server"));
+    xhr.onerror = () => reject(new TranscribeError("the upload could not reach mirelo's storage"));
     xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(file);

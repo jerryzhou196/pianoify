@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MAX_CLIP_SECONDS } from "../config";
 import {
   SilentAudioError,
   cropSeconds,
@@ -14,6 +13,17 @@ import { ModelPicker } from "./ModelPicker";
 import { modelById, type ModelId } from "../models";
 import { clock } from "../roll";
 
+/** How close to an edge counts as grabbing it, in pixels. Wide enough for a
+ *  finger, narrow enough that the middle of a ten-second window on a phone is
+ *  still the middle. */
+const GRIP_PX = 16;
+
+/** The shortest window the handles will make, in seconds — and the shortest
+ *  clip the Transcribe button will send. Under a second there is nothing for
+ *  either model to find, and a window pinched to zero cannot be grabbed open
+ *  again. */
+const MIN_CLIP_SECONDS = 1;
+
 /**
  * Choosing what to transcribe.
  *
@@ -22,11 +32,17 @@ import { clock } from "../roll";
  * window slides over it; the play button previews exactly what will be sent;
  * and the credits under the button are quoted for that window.
  *
- * The window is a fixed ten seconds, not two handles. Ten seconds is the cap
- * (`api/asset` measures the WAV and refuses anything longer), so a handle that
- * can be dragged to eleven is a handle whose only remaining job is to be
- * wrong. What is actually worth choosing is *which* ten seconds — so that is
- * the only thing there is to choose.
+ * The window has two handles and a middle: drag an edge to change how long the
+ * clip is, drag the body to change where it starts. It opens on ten seconds
+ * either way, which is the length worth being wrong about — a file dropped and
+ * transcribed without touching the waveform costs 25 credits, and the minutes
+ * are there for whoever goes looking for them.
+ *
+ * How far the edges pull apart is the model's business, not this panel's:
+ * Mirelo bills by the second and stops at ten minutes, the GPU box is rented
+ * by the hour and stops nowhere. `maxSeconds` in `src/models.ts` is where that
+ * is written down, and switching the picker to the stricter one pulls an
+ * over-long window back to fit rather than waiting to be refused.
  */
 export function UploadModal({
   onStart,
@@ -45,6 +61,11 @@ export function UploadModal({
   const [waited, setWaited] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  /** Which part of the window is under the pointer right now, so the grips can
+   *  light up while one is being pulled. Only the cursor and a highlight ride
+   *  on it — the crop itself lives in `cropRef`, which cannot wait for a
+   *  render. */
+  const [dragging, setDragging] = useState<"start" | "end" | "body" | null>(null);
   const [price, setPrice] = useState<{ credits: number | null; estimated_ms: number | null } | null>(
     null,
   );
@@ -52,10 +73,11 @@ export function UploadModal({
   const wave = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
-  /** Where in the window the pointer grabbed it, as a fraction of the file —
-   *  so a drag moves the window with the pointer instead of jumping its start
-   *  to wherever the pointer happens to be. */
-  const grab = useRef<number | null>(null);
+  /** What the pointer took hold of, and — for the body of the window — where
+   *  in it, as a fraction of the file. The offset is what makes a drag move
+   *  the window *with* the pointer instead of jumping its start to wherever
+   *  the pointer happens to be. */
+  const grab = useRef<{ part: "start" | "end" | "body"; offset: number } | null>(null);
   /** The live crop, for the preview loop and the drag handler, neither of
    *  which can wait for a re-render to see the state they just set. */
   const cropRef = useRef(crop);
@@ -121,27 +143,47 @@ export function UploadModal({
     [],
   );
 
-  /* ── sliding the window ────────────────────────────────────────────────── */
+  /* ── moving and resizing the window ────────────────────────────────────── */
 
-  /** How much of the file ten seconds covers. One for a file shorter than the
-   *  cap, where the window is the whole thing and there is nothing to slide. */
-  const span = source ? Math.min(MAX_CLIP_SECONDS / source.duration, 1) : 1;
-  const slidable = span < 1;
+  const picked = modelById(model);
 
-  const moveTo = useCallback(
-    (start: number) => {
-      const a = Math.max(0, Math.min(start, 1 - span));
-      setCrop({ a, b: a + span });
-    },
-    [span],
-  );
+  /** The window's limits, as fractions of the file.
+   *
+   *  `max` is the model's cap where it has one and the whole file where it
+   *  does not, so on the box the handles simply run to the ends. `min` keeps
+   *  a drag from collapsing the window to a line nobody can grab again — and
+   *  matches the length the Transcribe button already refuses to send. */
+  const max = source
+    ? picked.maxSeconds == null
+      ? 1
+      : Math.min(picked.maxSeconds / source.duration, 1)
+    : 1;
+  const min = source ? Math.min(MIN_CLIP_SECONDS / source.duration, max) : 1;
+  const adjustable = max > min;
+
+  /** Put the window at `start` keeping its length, without running off either
+   *  end of the file. */
+  const moveTo = useCallback((start: number, span: number) => {
+    const a = Math.max(0, Math.min(start, 1 - span));
+    setCrop({ a, b: a + span });
+  }, []);
 
   useEffect(() => {
     const move = (x: number) => {
-      const offset = grab.current;
+      const held = grab.current;
       const rect = wave.current?.getBoundingClientRect();
-      if (offset === null || !rect) return;
-      moveTo((x - rect.left) / rect.width - offset);
+      if (!held || !rect) return;
+      const at = (x - rect.left) / rect.width;
+      const { a, b } = cropRef.current;
+      if (held.part === "body") {
+        moveTo(at - held.offset, b - a);
+      } else if (held.part === "start") {
+        // The far edge stays put, so the near one is fenced in by how short
+        // and how long the window is allowed to be.
+        setCrop({ a: clamp(at, Math.max(0, b - max), b - min), b });
+      } else {
+        setCrop({ a, b: clamp(at, a + min, Math.min(1, a + max)) });
+      }
     };
     const onMouse = (e: MouseEvent) => move(e.clientX);
     // A finger on the waveform slides the window instead of scrolling the page
@@ -155,6 +197,7 @@ export function UploadModal({
     };
     const up = () => {
       grab.current = null;
+      setDragging(null);
     };
     window.addEventListener("mousemove", onMouse);
     window.addEventListener("mouseup", up);
@@ -168,26 +211,54 @@ export function UploadModal({
       window.removeEventListener("touchend", up);
       window.removeEventListener("touchcancel", up);
     };
-  }, [moveTo]);
+  }, [moveTo, min, max]);
 
-  /** Grab the window wherever it was pressed; pressing outside it centres it on
-   *  the pointer first, so a press at the far end of a long file still gets you
-   *  there in one gesture. */
+  /**
+   * Work out what was grabbed.
+   *
+   * Within a handle's width of either edge, it is that edge — measured in
+   * pixels rather than in fractions of the file, because a handle has to stay
+   * the same size to the finger whether the file is a minute or an hour.
+   * Inside the window, it is the window. Outside it, the window comes to the
+   * pointer first, so a press at the far end of a long file still gets you
+   * there in one gesture rather than in several.
+   */
   const startAt = (clientX: number) => {
     const rect = wave.current?.getBoundingClientRect();
-    if (!rect || !slidable) return;
+    if (!rect) return;
     const at = (clientX - rect.left) / rect.width;
-    const { a } = cropRef.current;
-    if (at >= a && at <= a + span) {
-      grab.current = at - a;
+    const { a, b } = cropRef.current;
+    const grip = GRIP_PX / rect.width;
+
+    if (adjustable && Math.abs(at - a) <= grip) {
+      grab.current = { part: "start", offset: 0 };
+    } else if (adjustable && Math.abs(at - b) <= grip) {
+      grab.current = { part: "end", offset: 0 };
+    } else if (at >= a && at <= b) {
+      grab.current = { part: "body", offset: at - a };
     } else {
-      grab.current = span / 2;
-      moveTo(at - span / 2);
+      const span = b - a;
+      grab.current = { part: "body", offset: span / 2 };
+      moveTo(at - span / 2, span);
     }
+    setDragging(grab.current.part);
   };
 
   const startDrag = (e: React.MouseEvent) => startAt(e.clientX);
   const startTouch = (e: React.TouchEvent) => startAt(e.touches[0].clientX);
+
+  /** Pull the window back inside the model's cap when the picker changes.
+   *
+   *  Three minutes chosen on the box and then handed to Mirelo is fine; forty
+   *  is a clip Mirelo would refuse, and finding that out at the Transcribe
+   *  button — after a quote that could not be got either — is worse than
+   *  watching the window shorten under the pointer. It keeps its start, since
+   *  where the clip begins is the part that was chosen deliberately. */
+  useEffect(() => {
+    setCrop((current) =>
+      current.b - current.a > max ? { a: current.a, b: current.a + max } : current,
+    );
+  }, [max]);
 
   /* ── the preview ────────────────────────────────────────────────────────── */
 
@@ -268,7 +339,6 @@ export function UploadModal({
 
   const left = crop.a * 100;
   const right = crop.b * 100;
-  const picked = modelById(model);
   // What this clip will cost. Null while an answer is still on its way — the
   // line simply has one fewer thing in it until it lands.
   const cost = !picked.billed
@@ -358,20 +428,23 @@ export function UploadModal({
                     {playing ? "Stop" : "Play selection"}
                   </button>
                   <span className="caption">
-                    {slidable
-                      ? `DRAG THE ${MAX_CLIP_SECONDS}s WINDOW`
-                      : `WHOLE FILE — UNDER ${MAX_CLIP_SECONDS}s`}
+                    {!adjustable
+                      ? "WHOLE FILE"
+                      : max < 1
+                        ? `DRAG · EDGES RESIZE · MAX ${clock(picked.maxSeconds!)}`
+                        : "DRAG · EDGES RESIZE"}
                   </span>
                 </div>
                 <span className="readout">
-                  {clock(window_.start)} → {clock(window_.end)} ({seconds.toFixed(1)}s)
+                  {clock(window_.start)} → {clock(window_.end)} ({length(seconds)})
                 </span>
               </div>
 
               <div
                 className="wave"
                 ref={wave}
-                data-slidable={slidable ? 1 : 0}
+                data-slidable={adjustable ? 1 : 0}
+                data-dragging={dragging ?? ""}
                 onMouseDown={startDrag}
                 onTouchStart={startTouch}
               >
@@ -389,6 +462,24 @@ export function UploadModal({
                 </div>
                 <div className="wave-mask left" style={{ width: `${left}%` }} />
                 <div className="wave-mask right" style={{ width: `${100 - right}%` }} />
+                {/* The edges, drawn as something to take hold of. They carry no
+                    handlers of their own — the strip below them does the hit
+                    testing in pixels, so a grip stays the same size to the
+                    finger however long the file is. */}
+                {adjustable && (
+                  <>
+                    <div
+                      className="wave-grip"
+                      data-lit={dragging === "start" ? 1 : 0}
+                      style={{ left: `${left}%` }}
+                    />
+                    <div
+                      className="wave-grip"
+                      data-lit={dragging === "end" ? 1 : 0}
+                      style={{ left: `${right}%` }}
+                    />
+                  </>
+                )}
                 <div className="wave-head" ref={head} />
               </div>
             </div>
@@ -407,7 +498,7 @@ export function UploadModal({
               </span>
               <button
                 className="go"
-                disabled={seconds < 1}
+                disabled={seconds < MIN_CLIP_SECONDS}
                 onClick={() => {
                   audio.current?.pause();
                   onStart(source, crop);
@@ -421,4 +512,16 @@ export function UploadModal({
       </div>
     </div>
   );
+}
+
+function clamp(value: number, low: number, high: number): number {
+  return Math.max(low, Math.min(value, high));
+}
+
+/** How long the window is, in whichever unit reads. Under a minute the tenth
+ *  of a second is the interesting digit, because it is the difference between
+ *  catching an onset and clipping it; past that nobody is counting in tenths,
+ *  and `2:14` is the number the transport will show anyway. */
+function length(seconds: number): string {
+  return seconds < 60 ? `${seconds.toFixed(1)}s` : clock(seconds);
 }

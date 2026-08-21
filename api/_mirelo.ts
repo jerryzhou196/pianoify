@@ -7,10 +7,13 @@
  * these three endpoints instead — which are deliberately thin, and forward
  * only the fields the app actually sets.
  *
- * The audio itself does *not* come through here. `/api/asset` hands the browser
- * a presigned S3 URL and the browser PUTs to it directly (the bucket answers
- * preflight with `Access-Control-Allow-Methods: PUT`), so a 30MB upload never
- * touches a function invocation. See `api/asset.ts`.
+ * The audio itself does *not* come through here. `/api/asset` reads the WAV's
+ * header, measures the clip from it, and then hands the browser a presigned S3
+ * URL to PUT the bytes to directly (the bucket answers preflight with
+ * `Access-Control-Allow-Origin: *` and `Access-Control-Allow-Methods: PUT`), so
+ * a fifty-megabyte upload never touches a function invocation — which is just
+ * as well, since a Vercel function refuses a request body past 4.5MB. See
+ * `api/asset.ts`.
  *
  * Written against `node:http` types rather than `@vercel/node`, because the
  * same handlers are mounted by the Vite dev server (see `vite.config.ts`) and
@@ -42,15 +45,20 @@ const API = "https://api.mirelo.ai";
 export const INSTRUMENTS = ["acoustic_piano"] as const;
 
 /**
- * The longest clip this app will ever send, in seconds.
+ * The longest clip this app will ever send Mirelo, in seconds.
  *
- * A product decision enforced where it cannot be argued with. Mirelo bills 2.5
- * credits per second of input, and everything downstream of the transcription
- * — the roll, the pedal, the fingering — reads better on ten seconds of the
- * part worth hearing than on a whole track. The browser caps the trim handles
- * at the same number, but that is a courtesy; this is the cap.
+ * Not a number this app picked: it is Mirelo's own ceiling. `preflight`
+ * refuses a `duration_ms` past 600000 outright, so ten minutes is the longest
+ * transcription the API will quote or run, and any smaller number here would
+ * be this app inventing a limit on top of one that already exists.
+ *
+ * It still costs money — 2.5 credits per second of input, so a full ten
+ * minutes is 1500 credits — which is why `/api/asset` measures every clip
+ * against it before opening a slot, and why the throttle below is what stands
+ * between a public URL and a loop of them. The GPU box has no such number:
+ * it is rented by the hour and charges nothing per clip.
  */
-export const MAX_CLIP_SECONDS = 10;
+export const MAX_CLIP_SECONDS = 600;
 
 export class ApiError extends Error {
   constructor(
@@ -151,9 +159,10 @@ export async function readJson(req: IncomingMessage): Promise<any> {
 
 /** Read a raw request body, refusing anything past `limit` bytes.
  *
- *  Used for the one endpoint that carries audio. The ceiling is generous for
- *  ten seconds of mono PCM (about 880KB at 44.1k) and still small enough that
- *  a mistake cannot turn this into an upload service. */
+ *  Used for the one endpoint that is handed part of a WAV. Only the leading
+ *  chunks are wanted — enough to reach `fmt ` and `data` — so the ceiling is
+ *  measured in kilobytes, which is also what keeps a function that hands out
+ *  upload URLs from being mistaken for the upload. */
 export async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   const parsed = (req as IncomingMessage & { body?: unknown }).body;
   if (Buffer.isBuffer(parsed)) return parsed;
@@ -172,11 +181,23 @@ export async function readBody(req: IncomingMessage, limit: number): Promise<Buf
 /**
  * How long a 16-bit PCM WAV plays, from its header.
  *
- * This is the only place the clip's length can be *checked* rather than taken
- * on trust: a number the browser sends alongside the audio is a number the
- * browser can get wrong or lie about, and the whole point of the cap is that
- * it holds regardless. Walking the RIFF chunks is a dozen lines, and it also
- * rejects anything that is not actually a WAV before it costs a credit.
+ * `buf` is the file's leading bytes, not the file: a ten-minute clip is fifty
+ * megabytes and a Vercel function refuses a request body past 4.5MB, so the
+ * audio goes from the tab straight to Mirelo's storage and only the header
+ * comes here. Everything needed to measure a PCM WAV is in it — the sample
+ * rate and frame size in `fmt `, and the length of the audio in the size the
+ * `data` chunk declares for itself.
+ *
+ * That declared size is what makes this a *check* rather than a number taken
+ * on trust. It is not the browser's summary of the clip, which could say
+ * anything; it is the file's own statement of how many sample bytes follow,
+ * and the decoder at the far end reads exactly that many. Appending more
+ * audio past a header that declares ten seconds does not buy an eleventh —
+ * it produces a file every WAV reader stops ten seconds into.
+ *
+ * A streamed WAV can carry a placeholder size instead, which measures
+ * nothing; those are refused rather than guessed at, and the app's own
+ * encoder never writes one.
  */
 export function wavSeconds(buf: Buffer): number {
   if (buf.length < 44 || buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE") {
@@ -198,9 +219,17 @@ export function wavSeconds(buf: Buffer): number {
       sampleRate = buf.readUInt32LE(body + 4);
       bits = buf.readUInt16LE(body + 14);
     } else if (id === "data") {
-      // A streamed WAV can carry a placeholder size; trust what actually
-      // arrived when the declared size overruns the buffer.
-      dataBytes = Math.min(size, buf.length - body);
+      // The declared size, not what arrived — the payload here is a header,
+      // and the audio it describes is on its way to S3 rather than to us.
+      // 0 and 0xFFFFFFFF are the two placeholders a streaming writer leaves
+      // behind; both mean "unknown", and neither can be measured.
+      if (size === 0 || size === 0xffffffff) {
+        throw new ApiError(
+          400,
+          "that WAV declares no length in its data chunk, so its duration cannot be checked",
+        );
+      }
+      dataBytes = size;
       break;
     }
     at = body + size + (size % 2);
