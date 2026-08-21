@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A sitemap for a single-page app is one line of it. It is here anyway:
+     without one, `www` and the apex and every preview URL are equally
+     plausible candidates for the canonical, and this settles it in the one
+     place Search Console reads first. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://www.pianoify.net/</loc>
+    <lastmod>2026-08-21</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
