@@ -93,9 +93,15 @@ export default function App() {
     const frame = () => {
       raf = requestAnimationFrame(frame);
       const at = engine.position;
+      // The engine is paused while the modal is up, so the decoration behind it
+      // runs off the wall clock instead. The roll and the keys both read this
+      // one number: sampling `performance.now()` a second time further down
+      // would let a note land a hair before or after the key it lights, and a
+      // note that does not land on its own key is the whole effect gone.
+      const drawnAt = modalOpen ? (performance.now() / 1000) % MODAL_KEY_LOOP_DURATION : at;
 
       if (layerRef.current) {
-        const y = rollHeight.current + at * PIXELS_PER_SECOND;
+        const y = rollHeight.current + drawnAt * PIXELS_PER_SECOND;
         layerRef.current.style.transform = `translate3d(0,${y.toFixed(2)}px,0)`;
       }
       if (clockRef.current) {
@@ -114,12 +120,9 @@ export default function App() {
       // Which keys are down. Only the ones that changed are touched, so a
       // steady chord costs nothing after the frame it lands on.
       const keyNotes = modalOpen ? MODAL_KEY_LOOP_NOTES : notes;
-      const keyTime = modalOpen
-        ? (performance.now() / 1000) % MODAL_KEY_LOOP_DURATION
-        : at;
       const now = new Map<number, string>();
       for (const n of keyNotes) {
-        if (n.time <= keyTime && keyTime < n.time + n.dur) {
+        if (n.time <= drawnAt && drawnAt < n.time + n.dur) {
           now.set(n.midi, noteColor(n.hand, n.midi));
         }
       }
@@ -326,9 +329,17 @@ export default function App() {
         musicxmlUrl={musicxmlUrl}
       />
 
+      {/* The decoration stands in for the transcription while the modal is up,
+          which also settles what happens to the "nothing transcribed yet"
+          placeholder: the roll is not empty, so it does not appear. That is the
+          right way round — the modal already says what to do next, and the text
+          would only be legible in the strip of roll the panel leaves showing,
+          where it would sit behind falling notes. It comes back the moment the
+          modal closes on an empty roll. */}
       <Roll
-        notes={notes}
-        chords={chords}
+        notes={modalOpen ? MODAL_ROLL_NOTES : notes}
+        decorative={modalOpen}
+        chords={modalOpen ? EMPTY_CHORDS : chords}
         pps={PIXELS_PER_SECOND}
         containerRef={rollRef}
         layerRef={layerRef}
@@ -467,3 +478,39 @@ function residentArrangement(): Note[] {
 const MODAL_KEY_LOOP_NOTES = residentArrangement().filter(
   (note) => note.time < MODAL_KEY_LOOP_DURATION,
 );
+
+/** How far above the keyboard the decoration is laid out. Taller than any
+ *  window this runs in, which is the point: an over-estimate costs a few dozen
+ *  rectangles parked off the top of the roll and one layout on mount, and buys
+ *  not having to re-tile the whole thing every time the window is resized. */
+const MODAL_ROLL_LEAD_PIXELS = 2400;
+
+/**
+ * The same four beats the keys are lit from, tiled up and down the roll.
+ *
+ * The loop is worth about four hundred pixels at this zoom and the roll is
+ * several times that tall, so a single copy of it would spend most of the cycle
+ * as an empty column with a hard jump every time the clock wrapped. Repeating
+ * the figure at `time + k · duration` fills the whole height instead, and
+ * because the result is periodic in exactly the interval the transform wraps
+ * on, the wrap is invisible: every copy steps into the place the one below it
+ * has just left. The copy at k = −1 is the one still sounding under the
+ * keyboard at that moment, and without it the last note of the bar would blink
+ * out mid-sustain.
+ */
+const MODAL_ROLL_NOTES: Note[] = (() => {
+  const above = Math.ceil(MODAL_ROLL_LEAD_PIXELS / (MODAL_KEY_LOOP_DURATION * PIXELS_PER_SECOND));
+  const out: Note[] = [];
+  for (let k = -1; k <= above; k++) {
+    for (const note of MODAL_KEY_LOOP_NOTES) {
+      out.push({ ...note, time: note.time + k * MODAL_KEY_LOOP_DURATION });
+    }
+  }
+  return out;
+})();
+
+/** Reopening the modal after a transcription leaves that transcription's chords
+ *  in state, pinned to times the decoration knows nothing about — they would
+ *  sail past the loop at arbitrary moments. One shared empty array, so the
+ *  marks are torn down once instead of rebuilt on every render. */
+const EMPTY_CHORDS: Chord[] = [];
