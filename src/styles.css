@@ -902,8 +902,12 @@ input::placeholder {
   height: 84px;
 }
 
+/* Only the slidable wave claims the gesture: when the whole file already fits
+   the window there is nothing to drag, and swallowing the swipe would just
+   leave a dead strip the page will not scroll past. */
 .wave[data-slidable="1"] {
   cursor: grab;
+  touch-action: none;
 }
 
 .wave[data-slidable="1"]:active {
@@ -1042,6 +1046,17 @@ input::placeholder {
   color: var(--ink-soft);
   letter-spacing: 0.06em;
   white-space: nowrap;
+}
+
+/* On a phone the trim head has room for the button and the caption telling you
+   what to do with it, and not for the timecode as well. The readout is the
+   line to drop: the window it counts is drawn right below it, and the length
+   never changes — it is always the full clip — so the digits repeat what the
+   caption already said. */
+@media (max-width: 760px) {
+  .trim-head .readout {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

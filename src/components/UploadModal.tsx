@@ -137,30 +137,46 @@ export function UploadModal({
   );
 
   useEffect(() => {
-    const move = (e: MouseEvent) => {
+    const move = (x: number) => {
       const offset = grab.current;
       const rect = wave.current?.getBoundingClientRect();
       if (offset === null || !rect) return;
-      moveTo((e.clientX - rect.left) / rect.width - offset);
+      moveTo((x - rect.left) / rect.width - offset);
+    };
+    const onMouse = (e: MouseEvent) => move(e.clientX);
+    // A finger on the waveform slides the window instead of scrolling the page
+    // behind it. touch-action on the slidable wave claims the gesture up front,
+    // and preventDefault here keeps a drag that wanders off the strip from
+    // being handed back to the page as a scroll halfway through.
+    const onTouch = (e: TouchEvent) => {
+      if (grab.current === null) return;
+      e.preventDefault();
+      move(e.touches[0].clientX);
     };
     const up = () => {
       grab.current = null;
     };
-    window.addEventListener("mousemove", move);
+    window.addEventListener("mousemove", onMouse);
     window.addEventListener("mouseup", up);
+    window.addEventListener("touchmove", onTouch, { passive: false });
+    window.addEventListener("touchend", up);
+    window.addEventListener("touchcancel", up);
     return () => {
-      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mousemove", onMouse);
       window.removeEventListener("mouseup", up);
+      window.removeEventListener("touchmove", onTouch);
+      window.removeEventListener("touchend", up);
+      window.removeEventListener("touchcancel", up);
     };
   }, [moveTo]);
 
-  /** Grab the window wherever it was clicked; clicking outside it centres it on
-   *  the pointer first, so a click at the far end of a long file still gets you
+  /** Grab the window wherever it was pressed; pressing outside it centres it on
+   *  the pointer first, so a press at the far end of a long file still gets you
    *  there in one gesture. */
-  const startDrag = (e: React.MouseEvent) => {
+  const startAt = (clientX: number) => {
     const rect = wave.current?.getBoundingClientRect();
     if (!rect || !slidable) return;
-    const at = (e.clientX - rect.left) / rect.width;
+    const at = (clientX - rect.left) / rect.width;
     const { a } = cropRef.current;
     if (at >= a && at <= a + span) {
       grab.current = at - a;
@@ -169,6 +185,9 @@ export function UploadModal({
       moveTo(at - span / 2);
     }
   };
+
+  const startDrag = (e: React.MouseEvent) => startAt(e.clientX);
+  const startTouch = (e: React.TouchEvent) => startAt(e.touches[0].clientX);
 
   /* ── the preview ────────────────────────────────────────────────────────── */
 
@@ -354,6 +373,7 @@ export function UploadModal({
                 ref={wave}
                 data-slidable={slidable ? 1 : 0}
                 onMouseDown={startDrag}
+                onTouchStart={startTouch}
               >
                 <div className="wave-bars">
                   {Array.from(source.peaks).map((amp, i) => {
