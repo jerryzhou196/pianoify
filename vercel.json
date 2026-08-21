@@ -27,6 +27,10 @@
     {
       "source": "/ytdlp/:path*",
       "destination": "https://jerryzhou.ca/ytdlp/:path*"
+    },
+    {
+      "source": "/gpu/:path*",
+      "destination": "https://muscriptor-api.jerryzhou.ca/:path*"
     }
   ]
 }
