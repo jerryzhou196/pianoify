@@ -6,7 +6,7 @@
  * the trim handles move, so the number under the Transcribe button is the cost
  * of the crop actually selected rather than of the whole file.
  */
-import { MAX_CLIP_SECONDS, json, mirelo, query, route } from "./_mirelo.js";
+import { MAX_CLIP_SECONDS, json, mirelo, query, route, throttle } from "./_mirelo.js";
 
 /** The same cap the upload enforces. Quoting a price for a clip that could
  *  never be sent would be quoting a lie. */
@@ -14,6 +14,9 @@ const MAX_MS = MAX_CLIP_SECONDS * 1000;
 
 export default route({
   GET: async (req, res) => {
+    // Quotes are free at Mirelo, and the trim handles debounce to ~5/s at
+    // worst. This is just so a tight loop cannot sit on the function.
+    throttle(req, "preflight", 40, 60_000);
     const ms = Math.round(Number(query(req).get("duration_ms")));
     if (!Number.isFinite(ms) || ms <= 0 || ms > MAX_MS) {
       json(res, 400, {
