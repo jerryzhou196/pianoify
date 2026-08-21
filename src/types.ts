@@ -33,7 +33,10 @@ export interface Chord {
  *  roll falls back to a plain seconds grid. */
 export interface BeatGrid {
   bpm: number;
-  beatsPerBar: number;
+  /** Null when a tempo was found but no meter — the beats are steady and
+   *  nobody could say where the bar starts. Reported rather than defaulted to
+   *  four, so that nothing claims a time signature the transcriber did not. */
+  beatsPerBar: number | null;
   firstDownbeat: number;
   /** Whether Mirelo measured this from the audio or fell back to its default
    *  120/4. A defaulted grid is not worth drawing bar lines from. */
@@ -56,9 +59,27 @@ export interface Transcription {
   timing: Timing;
   /** Length of the clip that was sent, in seconds. */
   duration: number;
-  /** Mirelo's own renderings of the same transcription, behind presigned links
-   *  that expire in an hour. Both are what the export buttons hand over, and
-   *  the MusicXML is what the sheet-music tab engraves. */
+  /** The transcriber's own renderings of the same transcription. Both are what
+   *  the export buttons hand over, and the MusicXML is what the sheet-music tab
+   *  engraves. Mirelo returns presigned links that expire in an hour; the GPU
+   *  box hands back MIDI bytes, which become an object URL. */
   midiUrl: string | null;
   musicxmlUrl: string | null;
+  /** Engrave what was just decoded, when the MusicXML did not come back with
+   *  it. The GPU box sets this — it writes notation on request, in a second
+   *  call of a few seconds, so the sheet music lands after the roll rather
+   *  than holding it up. Null from the call means the engraving failed, which
+   *  costs the sheet-music tab and never the transcription. */
+  engrave?: () => Promise<Engraving | null>;
+}
+
+/** Notation written after the notes, and what it was written from.
+ *
+ *  `quantized` says the engraving came from a copy of the transcription with
+ *  its onsets moved onto the detected beats. The roll still draws the notes as
+ *  they were played, so when this is true the two are deliberately showing
+ *  different things — which is why the sheet-music caption says so. */
+export interface Engraving {
+  url: string;
+  quantized: boolean;
 }
