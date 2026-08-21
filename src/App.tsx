@@ -61,6 +61,11 @@ export default function App() {
   // way, because it is a gain on the piano.
   useEffect(() => engine.setMix(1 - blend), [engine, blend]);
   useEffect(() => engine.setSpeed(speed), [engine, speed]);
+  useEffect(() => {
+    if (!modalOpen) return;
+    engine.pause();
+    setPlaying(false);
+  }, [engine, modalOpen]);
 
   // The roll fades out as the crossfade moves toward the recording, so what you
   // are hearing and what you are looking at agree. One write on the layer
