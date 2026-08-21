@@ -1,67 +1,59 @@
 /**
- * Where the two backends live, and how much audio we send them.
+ * What the client needs to know about the outside world.
  *
- * There are two, because transcription and chord recognition want different
- * hardware: notes come from a GPU box running muscriptor, chords from BTC on a
- * free CPU-only Hugging Face Space. Splitting them keeps the GPU rented only
- * for the thing that actually needs one.
- *
- * Both are `VITE_*`, so they are inlined at build time and a redeploy is what
- * changes them — but both also carry the deployed defaults, so a fresh clone
- * runs against the real backends without an `.env.local`.
+ * The transcriber is no longer one of these. Mirelo is reached through this
+ * site's own `/api/*` functions, because the API key bills a real account and
+ * anything `VITE_*` is inlined into a bundle a browser can read — so there is
+ * no transcription origin to configure here, only the chord service, which is
+ * public and has no key.
  */
 
-/**
- * Resolve one base origin.
- *
- * An unset variable falls back to the deployed backend, so a fresh clone runs
- * against the real thing. An explicitly *empty* one resolves to `""`, which
- * makes every URL below a same-origin relative path — that is what the dev
- * proxy in vite.config.ts is keyed on, and it is a working configuration, not
- * a disabled one. The trailing slash goes because `base + "/transcribe"` must
- * not become `//transcribe`, which is a different (broken) URL.
- */
 function base(raw: string | undefined, fallback: string): string {
   return (raw ?? fallback).trim().replace(/\/+$/, "");
 }
 
-export const TRANSCRIBE_BASE = base(
-  import.meta.env.VITE_TRANSCRIBE_API_BASE,
-  "https://muscriptor-api.jerryzhou.ca",
-);
-
+/** The standalone chord service: CPU-only BTC chord recognition on a free
+ *  Hugging Face Space. An explicitly empty value makes every chord URL a
+ *  relative path, which is what the dev proxy in `vite.config.ts` forwards. */
 export const CHORD_BASE = base(
   import.meta.env.VITE_CHORD_API_BASE,
   "https://jerrdeh-muscriptor-chords.hf.space",
 );
 
-/**
- * Whether to ask the standalone chord service at all.
- *
- * Turned off with the literal `off` rather than with an empty string, because
- * empty already means something else here (same-origin, via the dev proxy).
- * When it is off — or when the Space is asleep and never answers — chords come
- * from the ones `/transcribe` embeds in its final event instead. It is one
- * source or the other, never both, so there is only ever one chord track to
- * reason about.
- */
+/** Whether to ask for chords at all. Off with the literal `off`, because empty
+ *  already means something else here (same-origin, via the dev proxy). */
 export const chordServiceEnabled =
   (import.meta.env.VITE_CHORD_API_BASE ?? "").trim().toLowerCase() !== "off";
 
-/**
- * Seconds of audio uploaded per transcription.
- *
- * Not a limit the server publishes — `/transcribe` accepts far longer files.
- * It is a latency budget: the box transcribes a chunk at a time and the client
- * holds the connection open the whole while, so a three-minute upload is a
- * three-minute wait behind a single global lock. Fifteen seconds of the most
- * musical part of the file is the thing worth hearing back, and it returns
- * fast enough that the page stays a toy you can play with.
- */
-export const CLIP_SECONDS = Math.max(
-  1,
-  Number(import.meta.env.VITE_CLIP_SECONDS ?? 15) || 15,
-);
-
-export const transcribeApi = (path: string) => TRANSCRIBE_BASE + path;
 export const chordApi = (path: string) => CHORD_BASE + path;
+
+/**
+ * The longest clip this app transcribes, in seconds.
+ *
+ * The real cap lives in `api/_mirelo.ts`, which measures the WAV it is handed
+ * and refuses anything longer — the browser cannot be trusted with a limit
+ * that costs money. This copy is what stops the trim handles from opening on a
+ * crop that would only be rejected, and it must match the server's.
+ */
+export const MAX_CLIP_SECONDS = 10;
+
+/** How long a crop the trim handles open on. The cap, since there is no room
+ *  under it worth defaulting to. */
+export const CLIP_SECONDS = MAX_CLIP_SECONDS;
+
+/**
+ * The YouTube→audio service, which is self-hosted (yt-dlp behind FastAPI).
+ *
+ * Same shape as the chord service above: an explicitly empty value makes the
+ * URLs relative, which the dev proxy forwards — and in production a rewrite in
+ * `vercel.json` does the same thing at the edge. Going through this origin
+ * rather than calling the service directly is what keeps the app out of the
+ * service's CORS allowlist entirely.
+ */
+export const YTDLP_BASE = base(import.meta.env.VITE_YTDLP_API_BASE, "");
+
+export const ytdlpApi = (path: string) => YTDLP_BASE + path;
+
+/** Pixels per second of music on the roll. At 130 a bar of anything moderate
+ *  is about a thumb's width, which is the zoom the roll was designed at. */
+export const PIXELS_PER_SECOND = 130;

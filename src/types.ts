@@ -1,3 +1,7 @@
+/** Which hand plays a note. Assigned by `src/hands.ts` — Mirelo transcribes
+ *  pitch and time, not who played what. */
+export type Hand = "L" | "R";
+
 /** A transcribed note, in the shape the roll draws and the engine plays. */
 export interface Note {
   /** MIDI note number. */
@@ -8,6 +12,10 @@ export interface Note {
   dur: number;
   /** 0–1. Drives both the roll's opacity and the voice's amplitude. */
   vel: number;
+  /** Which hand this was given to, and which finger of it. Both are inferred,
+   *  and both are what the roll colours and numbers a note by. */
+  hand: Hand;
+  finger: number;
 }
 
 /** One recognized chord change. `root`/`intervals` are what the chord is made
@@ -27,16 +35,30 @@ export interface BeatGrid {
   bpm: number;
   beatsPerBar: number;
   firstDownbeat: number;
-  /** Seconds the streamed note onsets sit *late* against the beats. The MIDI
-   *  the server returns already has this taken out; notes drawn from the live
-   *  event stream have not, so the roll subtracts it once the grid arrives. */
-  onsetDelay: number | null;
+  /** Whether Mirelo measured this from the audio or fell back to its default
+   *  120/4. A defaulted grid is not worth drawing bar lines from. */
+  detected: boolean;
+}
+
+/** How note times were written. `requested` is what the model picker asked for;
+ *  `applied` is what came back — `quantized` is honoured only when the detected
+ *  beat grid is steady enough to move notes onto, and `fallbackReason` says why
+ *  when it was not. */
+export interface Timing {
+  requested: string;
+  applied: string;
+  fallbackReason: string | null;
 }
 
 export interface Transcription {
   notes: Note[];
-  chords: Chord[];
   grid: BeatGrid | null;
+  timing: Timing;
   /** Length of the clip that was sent, in seconds. */
   duration: number;
+  /** Mirelo's own renderings of the same transcription, behind presigned links
+   *  that expire in an hour. Both are what the export buttons hand over, and
+   *  the MusicXML is what the sheet-music tab engraves. */
+  midiUrl: string | null;
+  musicxmlUrl: string | null;
 }
