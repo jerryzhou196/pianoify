@@ -71,6 +71,22 @@ const BUSY_RETRY_MS = 5000;
 const BUSY_ATTEMPTS = 12;
 
 /**
+ * The only instrument this app has.
+ *
+ * `instruments` is a hard constraint, not a hint: the server masks out every
+ * program and drum token outside the listed groups during generation. Left
+ * unset, the model decodes whatever it hears — on a pop track that came back
+ * as 53% *drums*, and a drum event's "pitch" is a kit number (36 kick, 38
+ * snare, 42 hi-hat), so playing the stream on a piano meant literally playing
+ * the drum map as notes. That is what a low-register mudslide sounds like.
+ *
+ * Asking for piano gets the model's piano reduction of the track instead —
+ * which is the entire product — and decodes faster for having fewer tokens to
+ * choose between.
+ */
+const INSTRUMENT = "acoustic_piano";
+
+/**
  * Transcribe `file`, streaming notes as they arrive.
  *
  * The stream is three kinds of event interleaved: `progress` anchors, `start`
@@ -102,6 +118,7 @@ async function runTranscribe(
 ): Promise<Transcription> {
   const form = new FormData();
   form.append("file", file, file.name);
+  form.append("instruments", INSTRUMENT);
   form.append("detect_tempo", "best-effort");
   // Chords are asked for even when the standalone service is configured: it is
   // the cheaper source when the Space is asleep, and having both lets the
