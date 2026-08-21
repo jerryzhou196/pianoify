@@ -17,14 +17,14 @@ import { clock } from "../roll";
  *
  * The file is decoded here, in the browser, before anything is sent — which is
  * what makes the rest of this panel possible. The waveform is that decode; the
- * trim handles cut it; the preview plays it; and the credits under the button
- * are quoted for the crop between the handles rather than for the file.
+ * window slides over it; the play button previews exactly what will be sent;
+ * and the credits under the button are quoted for that window.
  *
- * The handles open on the most musical window rather than at the start of the
- * file (see `suggestCrop`), because transcription is billed by the second and
- * the first thirty seconds of a recording are usually the least interesting
- * thirty seconds of it. Being able to disagree with that is the point of
- * handles.
+ * The window is a fixed ten seconds, not two handles. Ten seconds is the cap
+ * (`api/asset` measures the WAV and refuses anything longer), so a handle that
+ * can be dragged to eleven is a handle whose only remaining job is to be
+ * wrong. What is actually worth choosing is *which* ten seconds — so that is
+ * the only thing there is to choose.
  */
 export function UploadModal({
   onClose,
@@ -44,6 +44,7 @@ export function UploadModal({
   const [reading, setReading] = useState<string | null>(null);
   const [waited, setWaited] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
   const [price, setPrice] = useState<{ credits: number | null; estimated_ms: number | null } | null>(
     null,
   );
@@ -51,7 +52,14 @@ export function UploadModal({
   const wave = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
-  const drag = useRef<"a" | "b" | null>(null);
+  /** Where in the window the pointer grabbed it, as a fraction of the file —
+   *  so a drag moves the window with the pointer instead of jumping its start
+   *  to wherever the pointer happens to be. */
+  const grab = useRef<number | null>(null);
+  /** The live crop, for the preview loop and the drag handler, neither of
+   *  which can wait for a re-render to see the state they just set. */
+  const cropRef = useRef(crop);
+  cropRef.current = crop;
 
   /* ── loading ───────────────────────────────────────────────────────────── */
 
@@ -62,6 +70,7 @@ export function UploadModal({
       const decoded = await decodeSource(file);
       setSource(decoded);
       setCrop(suggestCrop(decoded));
+      setPlaying(false);
       // The preview plays the original file rather than the decoded buffer:
       // an <audio> element already knows how to stream, seek and stop, and the
       // bytes are right here.
@@ -69,6 +78,7 @@ export function UploadModal({
       if (audio.current?.src) URL.revokeObjectURL(audio.current.src);
       const el = new Audio(URL.createObjectURL(file));
       el.preload = "metadata";
+      el.onended = () => setPlaying(false);
       audio.current = el;
     } catch (e) {
       setSource(null);
@@ -111,22 +121,30 @@ export function UploadModal({
     [],
   );
 
-  /* ── the handles ───────────────────────────────────────────────────────── */
+  /* ── sliding the window ────────────────────────────────────────────────── */
+
+  /** How much of the file ten seconds covers. One for a file shorter than the
+   *  cap, where the window is the whole thing and there is nothing to slide. */
+  const span = source ? Math.min(MAX_CLIP_SECONDS / source.duration, 1) : 1;
+  const slidable = span < 1;
+
+  const moveTo = useCallback(
+    (start: number) => {
+      const a = Math.max(0, Math.min(start, 1 - span));
+      setCrop({ a, b: a + span });
+    },
+    [span],
+  );
 
   useEffect(() => {
     const move = (e: MouseEvent) => {
-      const which = drag.current;
+      const offset = grab.current;
       const rect = wave.current?.getBoundingClientRect();
-      if (!which || !rect) return;
-      const at = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      setCrop((c) =>
-        which === "a"
-          ? { a: Math.min(at, c.b - 0.01), b: c.b }
-          : { a: c.a, b: Math.max(at, c.a + 0.01) },
-      );
+      if (offset === null || !rect) return;
+      moveTo((e.clientX - rect.left) / rect.width - offset);
     };
     const up = () => {
-      drag.current = null;
+      grab.current = null;
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -134,48 +152,84 @@ export function UploadModal({
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     };
-  }, []);
+  }, [moveTo]);
+
+  /** Grab the window wherever it was clicked; clicking outside it centres it on
+   *  the pointer first, so a click at the far end of a long file still gets you
+   *  there in one gesture. */
+  const startDrag = (e: React.MouseEvent) => {
+    const rect = wave.current?.getBoundingClientRect();
+    if (!rect || !slidable) return;
+    const at = (e.clientX - rect.left) / rect.width;
+    const { a } = cropRef.current;
+    if (at >= a && at <= a + span) {
+      grab.current = at - a;
+    } else {
+      grab.current = span / 2;
+      moveTo(at - span / 2);
+    }
+  };
 
   /* ── the preview ───────────────────────────────────────────────────────── */
 
   // The playhead is written straight to the DOM, for the same reason the roll's
-  // is: it moves every frame and nothing else in this panel does.
+  // is: it moves every frame and nothing else in this panel does. The same loop
+  // stops the preview at the end of the window, which is what makes the play
+  // button mean "hear what will be sent" rather than "hear the file".
   useEffect(() => {
     if (!source) return;
     let raf = 0;
     const frame = () => {
       raf = requestAnimationFrame(frame);
       const el = audio.current;
-      if (!el || !head.current) return;
-      head.current.style.left = `${Math.min(100, (el.currentTime / source.duration) * 100)}%`;
-      head.current.style.opacity = el.paused ? "0.5" : "1";
+      if (!el) return;
+      if (head.current) {
+        head.current.style.left = `${Math.min(100, (el.currentTime / source.duration) * 100)}%`;
+        head.current.style.opacity = el.paused ? "0" : "1";
+      }
+      if (!el.paused && el.currentTime >= cropRef.current.b * source.duration) {
+        el.pause();
+        setPlaying(false);
+      }
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
   }, [source]);
 
-  const preview = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!source || !audio.current) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const at = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audio.current.currentTime = at * source.duration;
-    void audio.current.play().catch(() => {
-      // Autoplay policy, or a codec the element cannot stream even though
-      // WebAudio decoded it. The waveform is still the important part.
-    });
+  const togglePreview = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const el = audio.current;
+    if (!el || !source) return;
+    if (!el.paused) {
+      el.pause();
+      setPlaying(false);
+      return;
+    }
+    const from = crop.a * source.duration;
+    // Restart from the top of the window unless the preview was paused inside
+    // it, where carrying on is what you meant.
+    if (el.currentTime < from || el.currentTime >= crop.b * source.duration) {
+      el.currentTime = from;
+    }
+    void el
+      .play()
+      .then(() => setPlaying(true))
+      .catch(() => {
+        // Autoplay policy, or a codec the element cannot stream even though
+        // WebAudio decoded it. The waveform is still the important part.
+      });
   };
 
   /* ── the quote ─────────────────────────────────────────────────────────── */
 
-  const span = source ? cropSeconds(source, crop) : null;
-  const seconds = span ? span.end - span.start : 0;
-  const tooLong = seconds > MAX_CLIP_SECONDS;
+  const window_ = source ? cropSeconds(source, crop) : null;
+  const seconds = window_ ? window_.end - window_.start : 0;
 
-  // Re-quoted as the handles settle. Debounced, because a drag would otherwise
+  // Re-quoted as the window settles. Debounced, because a drag would otherwise
   // fire a request per frame, and abandoned on the way out so a stale answer
-  // cannot land on a newer crop.
+  // cannot land on a newer window.
   useEffect(() => {
-    if (!source || seconds <= 0 || tooLong) {
+    if (!source || seconds <= 0) {
       setPrice(null);
       return;
     }
@@ -187,12 +241,12 @@ export function UploadModal({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [source, seconds, tooLong]);
+  }, [source, seconds]);
 
   /* ── render ────────────────────────────────────────────────────────────── */
 
-  const percentA = crop.a * 100;
-  const percentB = crop.b * 100;
+  const left = crop.a * 100;
+  const right = crop.b * 100;
 
   return (
     <div
@@ -227,7 +281,9 @@ export function UploadModal({
           }}
         >
           <span className="headline">
-            {reading ? `${reading}${waited > 2 ? ` ${waited}s` : ""}` : "Drop an audio file, or click to browse"}
+            {reading
+              ? `${reading}${waited > 2 ? ` ${waited}s` : ""}`
+              : "Drop an audio file, or click to browse"}
           </span>
           <span className="hint">MP3 · WAV · M4A · FLAC — up to 10 min</span>
           <input
@@ -265,18 +321,26 @@ export function UploadModal({
 
         {error && <div className="modal-error">{error}</div>}
 
-        {source && span && (
+        {source && window_ && (
           <>
             <div className="trim">
               <div className="trim-head">
                 <span className="caption">
-                  TRIM — {MAX_CLIP_SECONDS}s MAX · DRAG EDGES TO CROP · CLICK TO PREVIEW
+                  {slidable
+                    ? `DRAG THE ${MAX_CLIP_SECONDS}s WINDOW — PLAY TO HEAR IT`
+                    : `WHOLE FILE — UNDER ${MAX_CLIP_SECONDS}s`}
                 </span>
                 <span className="readout">
-                  {clock(span.start)} → {clock(span.end)} ({seconds.toFixed(1)}s)
+                  {clock(window_.start)} → {clock(window_.end)} ({seconds.toFixed(1)}s)
                 </span>
               </div>
-              <div className="wave" ref={wave} onMouseDown={preview}>
+
+              <div
+                className="wave"
+                ref={wave}
+                data-slidable={slidable ? 1 : 0}
+                onMouseDown={startDrag}
+              >
                 <div className="wave-bars">
                   {Array.from(source.peaks).map((amp, i) => {
                     const at = (i + 0.5) / source.peaks.length;
@@ -289,49 +353,36 @@ export function UploadModal({
                     );
                   })}
                 </div>
-                <div className="wave-mask left" style={{ width: `${percentA}%` }} />
-                <div className="wave-mask right" style={{ width: `${100 - percentB}%` }} />
-                <div
-                  className="wave-handle"
-                  style={{ left: `${percentA}%` }}
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    drag.current = "a";
-                  }}
-                >
-                  <i />
-                </div>
-                <div
-                  className="wave-handle"
-                  style={{ left: `${percentB}%`, marginLeft: -6 }}
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    drag.current = "b";
-                  }}
-                >
-                  <i />
-                </div>
+                <div className="wave-mask left" style={{ width: `${left}%` }} />
+                <div className="wave-mask right" style={{ width: `${100 - right}%` }} />
                 <div className="wave-head" ref={head} />
+                <button
+                  className="wave-play"
+                  style={{ left: `${(left + right) / 2}%` }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={togglePreview}
+                  title={playing ? "stop the preview" : "preview these seconds"}
+                >
+                  {playing ? "❚❚" : "▶"}
+                </button>
               </div>
             </div>
 
             <div className="modal-foot">
               <span className="quote">
-                {tooLong
-                  ? `that crop is ${seconds.toFixed(1)}s — ${MAX_CLIP_SECONDS}s is the most this transcribes at once`
-                  : [
-                      modeLabel,
-                      price?.credits != null ? `${price.credits} credits` : null,
-                      price?.estimated_ms != null
-                        ? `about ${Math.max(1, Math.round(price.estimated_ms / 1000))}s`
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
+                {[
+                  modeLabel,
+                  price?.credits != null ? `${price.credits} credits` : null,
+                  price?.estimated_ms != null
+                    ? `about ${Math.max(1, Math.round(price.estimated_ms / 1000))}s`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
               <button
                 className="go"
-                disabled={tooLong || seconds < 1}
+                disabled={seconds < 1}
                 onClick={() => {
                   audio.current?.pause();
                   onStart(source, crop);
