@@ -27,14 +27,10 @@ import { clock } from "../roll";
  * the only thing there is to choose.
  */
 export function UploadModal({
-  onClose,
   onStart,
-  canClose,
   modeLabel,
 }: {
-  onClose: () => void;
   onStart: (source: Source, crop: Crop) => void;
-  canClose: boolean;
   modeLabel: string;
 }) {
   const [source, setSource] = useState<Source | null>(null);
@@ -249,20 +245,10 @@ export function UploadModal({
   const right = crop.b * 100;
 
   return (
-    <div
-      className="scrim"
-      onMouseDown={(e) => {
-        if (canClose && e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="scrim">
       <div className="modal">
         <div className="modal-head">
           <span className="title">New transcription</span>
-          {canClose && (
-            <button className="close" onClick={onClose} title="close">
-              ✕
-            </button>
-          )}
         </div>
 
         <label

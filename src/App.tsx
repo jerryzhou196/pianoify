@@ -358,9 +358,7 @@ export default function App() {
 
       {modalOpen && (
         <UploadModal
-          onClose={() => setModalOpen(false)}
           onStart={(source, crop) => void start(source, crop)}
-          canClose={notes.length > 0}
           modeLabel={modeLabel(mode)}
         />
       )}
