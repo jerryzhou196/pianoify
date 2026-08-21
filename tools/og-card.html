@@ -1,0 +1,104 @@
+<!doctype html>
+<!--
+  The source of `public/og.png` — the card Google, Slack, iMessage and every
+  other unfurler shows for this site.
+
+  It is HTML rather than a drawing because the two typefaces are the app's own,
+  loaded the same way the app loads them, so the card cannot drift from the
+  thing it is a picture of. Nothing builds it automatically: a social card is
+  changed about once a year, and a build step that runs a browser on every
+  deploy to produce a byte-identical PNG is not worth owning. Regenerate it by
+  hand when the wording changes:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless=new --disable-gpu --hide-scrollbars --virtual-time-budget=4000 \
+      --window-size=1200,630 --screenshot=public/og.png tools/og-card.html
+
+  1200×630 is the size every unfurler crops toward, and the window size above
+  is why this file pins its own dimensions rather than laying out responsively.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1200px; height: 630px; overflow: hidden; }
+      body {
+        background: #000;
+        font-family: "DM Sans", Helvetica, Arial, sans-serif;
+        color: #fff;
+        position: relative;
+      }
+      .roll { position: absolute; inset: 0 0 100px 0; }
+      .note { position: absolute; border-radius: 6px; }
+      .copy { position: absolute; left: 96px; bottom: 168px; }
+      h1 { font-size: 132px; font-weight: 700; letter-spacing: -5px; line-height: 1; }
+      p { font-size: 38px; font-weight: 400; color: #cfcfcf; margin-top: 18px; }
+      .kicker {
+        font-family: "IBM Plex Mono", Menlo, monospace;
+        font-size: 22px; color: #7d7d7d; letter-spacing: 4px; margin-top: 22px;
+      }
+      .keys { position: absolute; left: 0; right: 0; bottom: 0; height: 100px; background: #fff; }
+      .white { position: absolute; top: 0; bottom: 0; width: 2px; background: #000; }
+      .black { position: absolute; top: 0; height: 62px; width: 40px; background: #0a0a0a; border-radius: 0 0 3px 3px; }
+      .lit { position: absolute; top: 0; bottom: 0; width: 64px; }
+    </style>
+  </head>
+  <body>
+    <div class="roll">
+      <div class="note" style="left:196px;top:86px;width:18px;height:120px;background:#3ddc97;opacity:.9"></div>
+      <div class="note" style="left:286px;top:150px;width:18px;height:86px;background:#3ddc97;opacity:.75"></div>
+      <div class="note" style="left:372px;top:60px;width:18px;height:150px;background:#3ddc97;opacity:.55"></div>
+      <div class="note" style="left:640px;top:120px;width:18px;height:96px;background:#78bcff;opacity:.9"></div>
+      <div class="note" style="left:742px;top:70px;width:18px;height:140px;background:#78bcff;opacity:.7"></div>
+      <div class="note" style="left:850px;top:160px;width:18px;height:70px;background:#78bcff;opacity:.5"></div>
+      <div class="note" style="left:948px;top:100px;width:18px;height:110px;background:#78bcff;opacity:.35"></div>
+    </div>
+
+    <div class="copy">
+      <h1>pianoify</h1>
+      <p>Drop in a recording, hear it back as piano.</p>
+      <div class="kicker">AUDIO → MIDI → SHEET MUSIC</div>
+    </div>
+
+    <div class="keys" id="keys"></div>
+
+    <script>
+      const keys = document.getElementById("keys");
+      for (let i = 1; i < 18; i++) {
+        const d = document.createElement("div");
+        d.className = "white";
+        d.style.left = i * 66 + "px";
+        keys.appendChild(d);
+      }
+      const blacks = [46, 112, 244, 310, 376, 508, 574, 706, 772, 838, 970, 1036, 1102];
+      for (const x of blacks) {
+        const d = document.createElement("div");
+        d.className = "black";
+        d.style.left = x + "px";
+        keys.appendChild(d);
+      }
+      const lit = [[198, "#3ddc97"], [640, "#78bcff"]];
+      for (const [x, c] of lit) {
+        const d = document.createElement("div");
+        d.className = "lit";
+        d.style.left = x + "px";
+        d.style.background = c;
+        keys.appendChild(d);
+      }
+      for (const [x, c] of [[376, "#3ddc97"], [838, "#78bcff"]]) {
+        const d = document.createElement("div");
+        d.className = "black";
+        d.style.left = x + "px";
+        d.style.background = c;
+        keys.appendChild(d);
+      }
+    </script>
+  </body>
+</html>
