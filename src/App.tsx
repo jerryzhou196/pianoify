@@ -12,7 +12,7 @@ import { analyzeChords, chordAt, warmChordService } from "./chords";
 import { Engine } from "./engine";
 import { assignFingers, assignHands } from "./hands";
 import { MireloError, modeLabel, transcribe, type Stage, type TimingMode } from "./mirelo";
-import { clock, isBlack, noteColor } from "./roll";
+import { KEY_MAP, clock, isBlack, noteColor } from "./roll";
 import type { BeatGrid, Chord, Note, Timing } from "./types";
 
 type Phase = "idle" | "working" | "ready" | "error";
@@ -41,6 +41,7 @@ export default function App() {
   const [speed, setSpeed] = useState(1);
 
   const rollRef = useRef<HTMLDivElement>(null);
+  const instrumentRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const scrubRef = useRef<HTMLDivElement>(null);
   const clockRef = useRef<HTMLSpanElement>(null);
@@ -66,6 +67,20 @@ export default function App() {
     engine.pause();
     setPlaying(false);
   }, [engine, modalOpen]);
+
+  // A phone is narrower than eighty-eight keys are worth drawing at, so on a
+  // small screen the roll and the keyboard sit together inside one horizontal
+  // scroller — together, because a keyboard that pans out from under the notes
+  // falling onto it is worse than no keyboard. What that costs is a starting
+  // position, and the left edge of a piano is the wrong one: middle C goes to
+  // the middle of whatever fits, once, and after that where you have panned to
+  // is yours. On desktop the scroller is `display: contents` and there is
+  // nothing to overflow, so this measures zero and does nothing.
+  useEffect(() => {
+    const el = instrumentRef.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    el.scrollLeft = (KEY_MAP[60].left / 100) * el.scrollWidth - el.clientWidth / 2;
+  }, []);
 
   // The roll fades out as the crossfade moves toward the recording, so what you
   // are hearing and what you are looking at agree. One write on the layer
@@ -326,31 +341,39 @@ export default function App() {
         musicxmlUrl={musicxmlUrl}
       />
 
-      <Roll
-        notes={notes}
-        chords={chords}
-        pps={PIXELS_PER_SECOND}
-        containerRef={rollRef}
-        layerRef={layerRef}
-        onSeekChord={seek}
-        empty={
-          <div className="roll-empty">
-            <span className={`headline${phase === "error" ? " roll-error" : ""}`}>
-              {error ?? "Nothing transcribed yet"}
-            </span>
-            <span className="sub">
-              {phase === "error" ? "TRY ANOTHER FILE" : "DROP A RECORDING TO START"}
-            </span>
-          </div>
-        }
-      >
-        {view === "sheet" && musicxmlUrl && (
-          <Sheet musicxmlUrl={musicxmlUrl} caption={sheetCaption} />
-        )}
-        {busy && <Working stage={stage} onCancel={cancel} />}
-      </Roll>
+      <div className="instrument" ref={instrumentRef}>
+        <div className="instrument-track">
+          <Roll
+            notes={notes}
+            chords={chords}
+            pps={PIXELS_PER_SECOND}
+            containerRef={rollRef}
+            layerRef={layerRef}
+            onSeekChord={seek}
+            empty={
+              <div className="roll-empty">
+                <span className={`headline${phase === "error" ? " roll-error" : ""}`}>
+                  {error ?? "Nothing transcribed yet"}
+                </span>
+                <span className="sub">
+                  {phase === "error" ? "TRY ANOTHER FILE" : "DROP A RECORDING TO START"}
+                </span>
+              </div>
+            }
+          >
+            {view === "sheet" && musicxmlUrl && (
+              <Sheet musicxmlUrl={musicxmlUrl} caption={sheetCaption} />
+            )}
+          </Roll>
 
-      <Keyboard register={registerKey} onStrike={(midi) => void engine.strike(midi)} />
+          <Keyboard register={registerKey} onStrike={(midi) => void engine.strike(midi)} />
+        </div>
+      </div>
+
+      {/* Outside the roll, which on a phone is wider than the screen and would
+          carry the strip off the side of it. From here it is a corner of the
+          app on a desktop and a row of it on a phone — see `.working`. */}
+      {busy && <Working stage={stage} onCancel={cancel} />}
 
       <Transport
         playing={playing}

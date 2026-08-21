@@ -7,6 +7,10 @@ import { KEYS, KEY_MAP, isBlack, noteName } from "../roll";
  * write from the animation loop through `register`, because keys change dozens
  * of times a second and re-rendering 88 elements to colour four of them would
  * be the most expensive thing on the page.
+ *
+ * A key sounds on pointer *down* — mouse, pen or finger, one handler for all
+ * three. Waiting for a click would put the note a whole gesture late, and on a
+ * phone that lateness is the difference between an instrument and a form.
  */
 export function Keyboard({
   register,
@@ -27,7 +31,7 @@ export function Keyboard({
             className={`key ${isBlack(midi) ? "black" : "white"}`}
             style={{ left: `${geo.left}%`, width: `${geo.width}%` }}
             title={noteName(midi)}
-            onMouseDown={() => onStrike(midi)}
+            onPointerDown={() => onStrike(midi)}
           />
         );
       })}
