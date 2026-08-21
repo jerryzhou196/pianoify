@@ -69,7 +69,9 @@ export interface Model {
 }
 
 /**
- * The model menu.
+ * The model menu, in the order it is offered — the box first, because it is
+ * what the picker opens on: it costs nothing per clip, so it is the one to
+ * reach for unless the sheet music is the point.
  *
  * Two of the three are the same Mirelo model asked for different note times:
  * it publishes one audio-to-MIDI model (v1.0) and one meaningful choice about
@@ -79,6 +81,15 @@ export interface Model {
  * isn't. The third is the box.
  */
 export const MODELS: Model[] = [
+  {
+    id: "muscriptor",
+    backend: "muscriptor",
+    service: "the gpu box",
+    name: "MuScriptor · GPU box",
+    tag: "self-hosted",
+    note: "Runs on the rented GPU rather than a hosted API: no credits, and the notes appear on the roll as the box decodes them. Exports MIDI; sheet music needs Mirelo.",
+    billed: false,
+  },
   {
     id: "mirelo-performance",
     backend: "mirelo",
@@ -99,18 +110,11 @@ export const MODELS: Model[] = [
     timing: "quantized",
     billed: true,
   },
-  {
-    id: "muscriptor",
-    backend: "muscriptor",
-    service: "the gpu box",
-    name: "MuScriptor · GPU box",
-    tag: "self-hosted",
-    note: "Runs on the rented GPU rather than a hosted API: no credits, and the notes appear on the roll as the box decodes them. Exports MIDI; sheet music needs Mirelo.",
-    billed: false,
-  },
 ];
 
-export const DEFAULT_MODEL: ModelId = "mirelo-performance";
+/** What the picker opens on. The first entry is the default, and is also what
+ *  an id from an older build falls back to. */
+export const DEFAULT_MODEL: ModelId = MODELS[0].id;
 
 export const modelById = (id: ModelId): Model =>
   MODELS.find((m) => m.id === id) ?? MODELS[0];

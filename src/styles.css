@@ -655,16 +655,18 @@ input::placeholder {
   background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(14px);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* The scrim scrolls, not the panel inside it: the modal head carries the
+     model picker, and a menu dropping out of a scroll box is a menu with its
+     last option cut off. `margin: auto` centres the panel the way
+     `align-items: center` would, without clipping the top of a tall one. */
+  overflow: auto;
   padding: 32px;
 }
 
 .modal {
   width: 720px;
   max-width: 100%;
-  max-height: 100%;
-  overflow: auto;
+  margin: auto;
   background: var(--panel-deep);
   border: 1px solid var(--edge-soft);
   border-radius: 14px;
@@ -673,9 +675,19 @@ input::placeholder {
 
 .modal-head {
   display: flex;
-  align-items: baseline;
+  /* Centred rather than on a baseline: the head carries the model picker
+     opposite the title, and a 28px chip has no baseline worth sharing. */
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 16px;
+}
+
+/* Anchored to the head's right edge, so it opens over the panel rather than
+   off the side of it. */
+.modal-head .picker-menu {
+  left: auto;
+  right: 0;
 }
 
 .modal-head .title {

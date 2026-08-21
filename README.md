@@ -141,13 +141,22 @@ was actually applied, and why, when the two differ.
 
 ### The model picker
 
-Three entries, two backends, in `src/models.ts`:
+Three entries, two backends, in `src/models.ts`, in the order they are offered:
 
 | | |
 |---|---|
+| **MuScriptor · GPU box** | the rented GPU, reached at `/gpu/*` — the default |
 | **Mirelo v1.0 · performance** | the hosted API, times as played |
 | **Mirelo v1.0 · quantized** | the same, onsets snapped to the detected beats |
-| **MuScriptor · GPU box** | the rented GPU, reached at `/gpu/*` |
+
+The picker is in two places (`ModelPicker.tsx`, one component and one piece of
+state above it): the header, and the head of the upload modal. The modal's copy
+is the one that matters — the modal cannot be dismissed, so until something has
+been transcribed the header is behind the scrim, and the choice of what does
+the transcribing has to be reachable before the file is, not after.
+
+The box leads the list and is what the picker opens on, because it costs
+nothing per clip. Reach for Mirelo when the sheet music is the point.
 
 Mirelo bills credits per second of input and engraves: the modal quotes a price
 before the button, and its MusicXML is what the sheet-music tab draws and the

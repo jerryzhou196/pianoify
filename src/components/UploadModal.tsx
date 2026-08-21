@@ -10,7 +10,8 @@ import {
 } from "../audio";
 import { LinkError, fetchLink, isYouTube } from "../links";
 import { quote } from "../mirelo";
-import type { Model } from "../models";
+import { ModelPicker } from "./ModelPicker";
+import { modelById, type ModelId } from "../models";
 import { clock } from "../roll";
 
 /**
@@ -30,9 +31,11 @@ import { clock } from "../roll";
 export function UploadModal({
   onStart,
   model,
+  onModel,
 }: {
   onStart: (source: Source, crop: Crop) => void;
-  model: Model;
+  model: ModelId;
+  onModel: (model: ModelId) => void;
 }) {
   const [source, setSource] = useState<Source | null>(null);
   const [crop, setCrop] = useState<Crop>({ a: 0, b: 1 });
@@ -229,7 +232,7 @@ export function UploadModal({
   // fire a request per frame, and abandoned on the way out so a stale answer
   // cannot land on a newer window.
   useEffect(() => {
-    if (!model.billed || !source || seconds <= 0) {
+    if (!modelById(model).billed || !source || seconds <= 0) {
       setPrice(null);
       return;
     }
@@ -241,15 +244,16 @@ export function UploadModal({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [model.billed, source, seconds]);
+  }, [model, source, seconds]);
 
   /* ── render ────────────────────────────────────────────────────────────── */
 
   const left = crop.a * 100;
   const right = crop.b * 100;
+  const picked = modelById(model);
   // What this clip will cost. Null while an answer is still on its way — the
   // line simply has one fewer thing in it until it lands.
-  const cost = !model.billed
+  const cost = !picked.billed
     ? "no credits"
     : price?.credits != null
       ? `${price.credits} credits`
@@ -260,6 +264,10 @@ export function UploadModal({
       <div className="modal">
         <div className="modal-head">
           <span className="title">New transcription</span>
+          {/* Which model, chosen before the file rather than after it: the
+              header's copy of this picker is behind the scrim, and out of
+              reach until something has already been transcribed. */}
+          <ModelPicker model={model} onModel={onModel} />
         </div>
 
         <div className="url">
@@ -368,7 +376,7 @@ export function UploadModal({
             <div className="modal-foot">
               <span className="quote">
                 {[
-                  model.name,
+                  picked.name,
                   cost,
                   price?.estimated_ms != null
                     ? `about ${Math.max(1, Math.round(price.estimated_ms / 1000))}s`
