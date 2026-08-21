@@ -10,8 +10,8 @@ audio-to-MIDI API, or a rented GPU box running
 picker in the header names — conditioned on `acoustic_piano`, which sends back
 the notes; the chords come from a CPU-only Hugging Face Space running BTC. The roll fills in while the
 model is still decoding, plays on a sampled Steinway grand with a working damper
-pedal, engraves Mirelo's MusicXML on a second tab, and crossfades against the
-original recording.
+pedal, engraves the transcription's MusicXML on a second tab, and crossfades
+against the original recording.
 
 ## Running it
 
@@ -57,6 +57,8 @@ audio file, or a youtube link
    ├─ gpu ──── POST /gpu/transcribe
    │                              → rewritten to the box; answers with an SSE
    │                                stream of notes and, at the end, the MIDI
+   │           POST /gpu/sheets   → the MIDI back for engraving, once the roll
+   │                                is playing; a zip with the MusicXML in it
    └─ POST /analyze  (HF)  → chords, in parallel, from a different machine
    ↓
    ↓  hands.ts          split the notes between the hands; put a finger on each
@@ -156,17 +158,46 @@ been transcribed the header is behind the scrim, and the choice of what does
 the transcribing has to be reachable before the file is, not after.
 
 The box leads the list and is what the picker opens on, because it costs
-nothing per clip. Reach for Mirelo when the sheet music is the point.
+nothing per clip.
 
-Mirelo bills credits per second of input and engraves: the modal quotes a price
-before the button, and its MusicXML is what the sheet-music tab draws and the
-MusicXML export saves. The box costs nothing per clip because the instance is
-rented by the hour, streams its notes over SSE instead of being polled (they
-land on the roll a few hundred milliseconds after it decodes them), and writes
-MIDI but no MusicXML — so on that model the sheet tab and the MusicXML export
-stay disabled, and say why. Everything downstream — hands, fingering, pedal,
-chords, exports — is the same code either way, because both clients return the
-same `Transcription`.
+Mirelo bills credits per second of input, which is why the modal quotes a price
+before the button, and engraves as it transcribes: its MusicXML comes back with
+the notes. The box costs nothing per clip because the instance is rented by the
+hour, and streams its notes over SSE instead of being polled — they land on the
+roll a few hundred milliseconds after it decodes them. Everything downstream —
+hands, fingering, pedal, chords, sheet music, exports — is the same code either
+way, because both clients return the same `Transcription`.
+
+### Sheet music from the box
+
+The box engraves too, but not in the same breath as the notes. `/sheets` runs
+MuseScore over a MIDI file, which is a real layout program doing a real layout
+on the box's CPU rather than its GPU: three or four seconds, against a
+transcription that streams its first notes in under one. So it is a second
+request, made once the notes are in and the roll is already playing, and the
+sheet-music tab opens on a line saying so rather than staying shut. Nothing
+waits for it — not the roll, not playback, not the MIDI export.
+
+What gets sent back for engraving is the *quantized* copy of the transcription
+where the box wrote one. Bar lines and note values come out of a beat grid, and
+a performance a few milliseconds off one engraves into a page of tied
+thirty-seconds that is technically the truth and useless to read. The roll
+still shows the notes as played, so on those clips the two panels are showing
+the same music at deliberately different times — which the sheet-music caption
+says out loud. Without a steady enough grid the box writes no such copy, and
+the performance MIDI is engraved instead, jitter and all.
+
+`/sheets` answers with a zip — the MusicXML, the MIDI back again, and PDFs of
+the score and the part — because MuseScore is slow enough that a round trip per
+file would be worse. Only the MusicXML is taken out of it, by `src/zip.ts`, and
+OpenSheetMusicDisplay draws it in the browser: a PDF would be a fixed page
+width, and this one lays out at the reader's. The archive is written
+uncompressed precisely so that unpacking one member of it is fifty lines rather
+than a deflate implementation.
+
+An engraving that fails costs the sheet-music tab and nothing else. The notes
+are already on the roll and playing, the MIDI export still works, and the tab
+says the box could not engrave that one.
 
 The box answers a browser only from the origins in its
 `MUSCRIPTOR_ALLOWED_ORIGINS`, so the app never calls it cross-origin: `/gpu/*`
@@ -228,7 +259,8 @@ service never turns a good transcription into an error.
 | `src/audio.ts` | decode, waveform, window selection, WAV encoding |
 | `src/models.ts` | the model picker's entries, and what both transcribers speak |
 | `src/mirelo.ts` | upload, submit, poll, and what Mirelo's shapes mean |
-| `src/muscriptor.ts` | the GPU box: one POST, and the SSE stream it answers with |
+| `src/muscriptor.ts` | the GPU box: one POST, the SSE stream it answers with, and the engraving that follows |
+| `src/zip.ts` | one member out of a stored zip, so the engraving needs no zip library |
 | `src/chords.ts` | the chord service |
 | `src/links.ts` | pasted links: YouTube, and everything else |
 | `src/hands.ts` | hand splitting and fingering |

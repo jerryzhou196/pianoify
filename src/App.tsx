@@ -35,6 +35,14 @@ export default function App() {
   const [timing, setTiming] = useState<Timing | null>(null);
   const [midiUrl, setMidiUrl] = useState<string | null>(null);
   const [musicxmlUrl, setMusicxmlUrl] = useState<string | null>(null);
+  /** Where the notation is, when the transcriber writes it in a second call
+   *  after the notes rather than handing it over with them. `idle` is both
+   *  "nothing transcribed yet" and "this backend engraves as it goes", which
+   *  is Mirelo — there `musicxmlUrl` simply arrives with the result. */
+  const [engraving, setEngraving] = useState<"idle" | "running" | "failed">("idle");
+  /** Whether the notation on the sheet-music tab was engraved from a copy
+   *  snapped to the beat grid, which the roll beside it is not. */
+  const [onGrid, setOnGrid] = useState(false);
   const [fileName, setFileName] = useState<string | null>("bach · prelude in c");
 
   const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
@@ -75,13 +83,17 @@ export default function App() {
     setPlaying(false);
   }, [engine, modalOpen]);
 
-  // The box hands back its MIDI in the stream rather than behind a link, so
-  // that export is an object URL made here. It is revoked when the next
-  // transcription replaces it, which Mirelo's presigned links do not need.
+  // The box hands its MIDI and its MusicXML over as bytes rather than behind
+  // links, so those exports are object URLs made here. Each is revoked when the
+  // next transcription replaces it, which Mirelo's presigned links do not need.
   useEffect(() => {
     if (!midiUrl?.startsWith("blob:")) return;
     return () => URL.revokeObjectURL(midiUrl);
   }, [midiUrl]);
+  useEffect(() => {
+    if (!musicxmlUrl?.startsWith("blob:")) return;
+    return () => URL.revokeObjectURL(musicxmlUrl);
+  }, [musicxmlUrl]);
 
   // The roll fades out as the crossfade moves toward the recording, so what you
   // are hearing and what you are looking at agree. One write on the layer
@@ -226,6 +238,8 @@ export default function App() {
       setTiming(null);
       setMidiUrl(null);
       setMusicxmlUrl(null);
+      setEngraving("idle");
+      setOnGrid(false);
       setFileName(`${source.name} · ${clock(span.start)}–${clock(span.end)}`);
       setSpeed(1);
       engine.setOriginal(buffer);
@@ -276,6 +290,27 @@ export default function App() {
           return;
         }
 
+        // Notation, when the transcriber writes it on request rather than
+        // returning it with the notes. It lands under a roll that is already
+        // playing, the same way the chords do, and a failure costs the
+        // sheet-music tab and nothing else.
+        if (result.engrave) {
+          setEngraving("running");
+          void result.engrave().then((engraved) => {
+            if (stale()) {
+              // A newer transcription owns the screen; this URL will never be
+              // handed to anything, so nothing else will free it.
+              if (engraved) URL.revokeObjectURL(engraved.url);
+              return;
+            }
+            setEngraving(engraved ? "idle" : "failed");
+            if (engraved) {
+              setMusicxmlUrl(engraved.url);
+              setOnGrid(engraved.quantized);
+            }
+          });
+        }
+
         setPhase("ready");
         // Start it — unless the roll was already playing, which it can be:
         // the notes stream in and nothing stopped anyone pressing play at 40%.
@@ -324,7 +359,13 @@ export default function App() {
 
   const sheetCaption = useMemo(() => {
     const bits = [`MusicXML · ${notes.length} notes`];
-    if (grid?.detected) bits.push(`${Math.round(grid.bpm)} bpm · ${grid.beatsPerBar}/4`);
+    if (grid?.detected) {
+      bits.push(`${Math.round(grid.bpm)} bpm`);
+      // Only when the transcriber found one. The engraver picks its own meter
+      // from the notes either way, and a caption reading 4/4 over a score in
+      // 3/4 is worse than a caption that does not mention it.
+      if (grid.beatsPerBar) bits.push(`${grid.beatsPerBar}/4`);
+    }
     if (timing) {
       bits.push(
         timing.applied === timing.requested
@@ -332,8 +373,22 @@ export default function App() {
           : `${timing.requested} → ${timing.applied}${timing.fallbackReason ? ` (${timing.fallbackReason})` : ""}`,
       );
     }
+    // The roll and the page are showing the same notes at different times
+    // when this is on, which is worth a word rather than leaving a reader to
+    // notice that the score is tidier than the thing they are hearing.
+    if (onGrid) bits.push("engraved on the detected beats");
     return bits.join(" · ");
-  }, [notes.length, grid, timing]);
+  }, [notes.length, grid, timing, onGrid]);
+
+  /** What the sheet-music tab says while it has no MusicXML to engrave. Only
+   *  the GPU box gets here: Mirelo's arrives with the notes, so on that
+   *  backend the tab does not open until there is a page behind it. */
+  const sheetNotice =
+    engraving === "running"
+      ? "engraving on the gpu box — a few seconds"
+      : engraving === "failed"
+        ? "the box could not engrave this one — the roll and the MIDI are unaffected"
+        : null;
 
   return (
     <div className="app">
@@ -346,6 +401,7 @@ export default function App() {
         onReplace={() => setModalOpen(true)}
         midiUrl={midiUrl}
         musicxmlUrl={musicxmlUrl}
+        engraving={engraving}
       />
 
       <Roll
@@ -366,8 +422,8 @@ export default function App() {
           </div>
         }
       >
-        {view === "sheet" && musicxmlUrl && (
-          <Sheet musicxmlUrl={musicxmlUrl} caption={sheetCaption} />
+        {view === "sheet" && (musicxmlUrl || sheetNotice) && (
+          <Sheet musicxmlUrl={musicxmlUrl} caption={sheetCaption} notice={sheetNotice} />
         )}
         {busy && <Working stage={stage} onCancel={cancel} />}
       </Roll>
