@@ -11,7 +11,15 @@ import { cropBuffer, cropSeconds, cropToWav, type Crop, type Source } from "./au
 import { analyzeChords, chordAt, warmChordService } from "./chords";
 import { Engine } from "./engine";
 import { assignFingers, assignHands } from "./hands";
-import { MireloError, modeLabel, transcribe, type Stage, type TimingMode } from "./mirelo";
+import { transcribe as transcribeWithMirelo } from "./mirelo";
+import {
+  DEFAULT_MODEL,
+  TranscribeError,
+  modelById,
+  type ModelId,
+  type Stage,
+} from "./models";
+import { transcribe as transcribeOnGpu } from "./muscriptor";
 import { clock, isBlack, noteColor } from "./roll";
 import type { BeatGrid, Chord, Note, Timing } from "./types";
 
@@ -27,9 +35,17 @@ export default function App() {
   const [timing, setTiming] = useState<Timing | null>(null);
   const [midiUrl, setMidiUrl] = useState<string | null>(null);
   const [musicxmlUrl, setMusicxmlUrl] = useState<string | null>(null);
+  /** Where the notation is, when the transcriber writes it in a second call
+   *  after the notes rather than handing it over with them. `idle` is both
+   *  "nothing transcribed yet" and "this backend engraves as it goes", which
+   *  is Mirelo — there `musicxmlUrl` simply arrives with the result. */
+  const [engraving, setEngraving] = useState<"idle" | "running" | "failed">("idle");
+  /** Whether the notation on the sheet-music tab was engraved from a copy
+   *  snapped to the beat grid, which the roll beside it is not. */
+  const [onGrid, setOnGrid] = useState(false);
   const [fileName, setFileName] = useState<string | null>("bach · prelude in c");
 
-  const [mode, setMode] = useState<TimingMode>("performance");
+  const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
   const [view, setView] = useState<"roll" | "sheet">("roll");
   const [modalOpen, setModalOpen] = useState(true);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -67,6 +83,18 @@ export default function App() {
     setPlaying(false);
   }, [engine, modalOpen]);
 
+  // The box hands its MIDI and its MusicXML over as bytes rather than behind
+  // links, so those exports are object URLs made here. Each is revoked when the
+  // next transcription replaces it, which Mirelo's presigned links do not need.
+  useEffect(() => {
+    if (!midiUrl?.startsWith("blob:")) return;
+    return () => URL.revokeObjectURL(midiUrl);
+  }, [midiUrl]);
+  useEffect(() => {
+    if (!musicxmlUrl?.startsWith("blob:")) return;
+    return () => URL.revokeObjectURL(musicxmlUrl);
+  }, [musicxmlUrl]);
+
   // The roll fades out as the crossfade moves toward the recording, so what you
   // are hearing and what you are looking at agree. One write on the layer
   // rather than one per note.
@@ -93,9 +121,15 @@ export default function App() {
     const frame = () => {
       raf = requestAnimationFrame(frame);
       const at = engine.position;
+      // The engine is paused while the modal is up, so the decoration behind it
+      // runs off the wall clock instead. The roll and the keys both read this
+      // one number: sampling `performance.now()` a second time further down
+      // would let a note land a hair before or after the key it lights, and a
+      // note that does not land on its own key is the whole effect gone.
+      const drawnAt = modalOpen ? (performance.now() / 1000) % MODAL_KEY_LOOP_DURATION : at;
 
       if (layerRef.current) {
-        const y = rollHeight.current + at * PIXELS_PER_SECOND;
+        const y = rollHeight.current + drawnAt * PIXELS_PER_SECOND;
         layerRef.current.style.transform = `translate3d(0,${y.toFixed(2)}px,0)`;
       }
       if (clockRef.current) {
@@ -114,12 +148,9 @@ export default function App() {
       // Which keys are down. Only the ones that changed are touched, so a
       // steady chord costs nothing after the frame it lands on.
       const keyNotes = modalOpen ? MODAL_KEY_LOOP_NOTES : notes;
-      const keyTime = modalOpen
-        ? (performance.now() / 1000) % MODAL_KEY_LOOP_DURATION
-        : at;
       const now = new Map<number, string>();
       for (const n of keyNotes) {
-        if (n.time <= keyTime && keyTime < n.time + n.dur) {
+        if (n.time <= drawnAt && drawnAt < n.time + n.dur) {
           now.set(n.midi, noteColor(n.hand, n.midi));
         }
       }
@@ -146,11 +177,16 @@ export default function App() {
 
   /* ── transport ────────────────────────────────────────────────────────── */
 
+  // Play always starts the clip over rather than resuming where it stopped.
+  // Ten seconds is short enough that "carry on from the middle" is rarely what
+  // anyone wants — you stop it to hear the thing again from the top — and the
+  // scrub bar is still there for landing somewhere else.
   const toggle = useCallback(() => {
     if (engine.playing) {
       engine.pause();
       setPlaying(false);
     } else {
+      engine.seek(0);
       void engine.play().then(() => setPlaying(engine.playing));
     }
   }, [engine]);
@@ -210,6 +246,8 @@ export default function App() {
       setTiming(null);
       setMidiUrl(null);
       setMusicxmlUrl(null);
+      setEngraving("idle");
+      setOnGrid(false);
       setFileName(`${source.name} · ${clock(span.start)}–${clock(span.end)}`);
       setSpeed(1);
       engine.setOriginal(buffer);
@@ -224,21 +262,27 @@ export default function App() {
             .catch(() => null)
         : Promise.resolve(null);
 
+      const picked = modelById(model);
       try {
-        const result = await transcribe(
-          file,
-          mode,
-          {
-            onStage: (s) => !stale() && setStage(stageText(s)),
-            onProgress: (fraction) => {
-              if (stale() || fraction === null) return;
-              setStage((current) => `${current.split(" · ")[0]} · ${Math.round(fraction * 100)}%`);
-            },
-            // Notes decoded so far, drawn while the model is still working.
-            onNotes: (partial) => !stale() && setNotes(partial),
+        const handlers = {
+          onStage: (s: Stage, detail?: string) =>
+            !stale() && setStage(stageText(s, picked.service, detail)),
+          onProgress: (fraction: number | null) => {
+            if (stale() || fraction === null) return;
+            setStage((current) => `${current.split(" · ")[0]} · ${Math.round(fraction * 100)}%`);
           },
-          controller.signal,
-        );
+          // Notes decoded so far, drawn while the model is still working.
+          onNotes: (partial: Note[]) => !stale() && setNotes(partial),
+        };
+        const result =
+          picked.backend === "muscriptor"
+            ? await transcribeOnGpu(file, handlers, controller.signal)
+            : await transcribeWithMirelo(
+                file,
+                picked.timing ?? "performance",
+                handlers,
+                controller.signal,
+              );
         if (stale()) return;
 
         setNotes(result.notes);
@@ -252,6 +296,27 @@ export default function App() {
           setPhase("error");
           setError("nothing pitched came back from that clip — try a different one");
           return;
+        }
+
+        // Notation, when the transcriber writes it on request rather than
+        // returning it with the notes. It lands under a roll that is already
+        // playing, the same way the chords do, and a failure costs the
+        // sheet-music tab and nothing else.
+        if (result.engrave) {
+          setEngraving("running");
+          void result.engrave().then((engraved) => {
+            if (stale()) {
+              // A newer transcription owns the screen; this URL will never be
+              // handed to anything, so nothing else will free it.
+              if (engraved) URL.revokeObjectURL(engraved.url);
+              return;
+            }
+            setEngraving(engraved ? "idle" : "failed");
+            if (engraved) {
+              setMusicxmlUrl(engraved.url);
+              setOnGrid(engraved.quantized);
+            }
+          });
         }
 
         setPhase("ready");
@@ -277,13 +342,13 @@ export default function App() {
         }
         setPhase("error");
         setError(
-          e instanceof MireloError
+          e instanceof TranscribeError
             ? e.message
             : `could not reach the transcriber — ${e instanceof Error ? e.message : "unknown error"}`,
         );
       }
     },
-    [engine, mode],
+    [engine, model],
   );
 
   const cancel = useCallback(() => {
@@ -302,7 +367,13 @@ export default function App() {
 
   const sheetCaption = useMemo(() => {
     const bits = [`MusicXML · ${notes.length} notes`];
-    if (grid?.detected) bits.push(`${Math.round(grid.bpm)} bpm · ${grid.beatsPerBar}/4`);
+    if (grid?.detected) {
+      bits.push(`${Math.round(grid.bpm)} bpm`);
+      // Only when the transcriber found one. The engraver picks its own meter
+      // from the notes either way, and a caption reading 4/4 over a score in
+      // 3/4 is worse than a caption that does not mention it.
+      if (grid.beatsPerBar) bits.push(`${grid.beatsPerBar}/4`);
+    }
     if (timing) {
       bits.push(
         timing.applied === timing.requested
@@ -310,25 +381,48 @@ export default function App() {
           : `${timing.requested} → ${timing.applied}${timing.fallbackReason ? ` (${timing.fallbackReason})` : ""}`,
       );
     }
+    // The roll and the page are showing the same notes at different times
+    // when this is on, which is worth a word rather than leaving a reader to
+    // notice that the score is tidier than the thing they are hearing.
+    if (onGrid) bits.push("engraved on the detected beats");
     return bits.join(" · ");
-  }, [notes.length, grid, timing]);
+  }, [notes.length, grid, timing, onGrid]);
+
+  /** What the sheet-music tab says while it has no MusicXML to engrave. Only
+   *  the GPU box gets here: Mirelo's arrives with the notes, so on that
+   *  backend the tab does not open until there is a page behind it. */
+  const sheetNotice =
+    engraving === "running"
+      ? "engraving on the gpu box — a few seconds"
+      : engraving === "failed"
+        ? "the box could not engrave this one — the roll and the MIDI are unaffected"
+        : null;
 
   return (
     <div className="app">
       <TopBar
-        mode={mode}
-        onMode={setMode}
+        model={model}
+        onModel={setModel}
         view={view}
         onView={setView}
         fileName={fileName}
         onReplace={() => setModalOpen(true)}
         midiUrl={midiUrl}
         musicxmlUrl={musicxmlUrl}
+        engraving={engraving}
       />
 
+      {/* The decoration stands in for the transcription while the modal is up,
+          which also settles what happens to the "nothing transcribed yet"
+          placeholder: the roll is not empty, so it does not appear. That is the
+          right way round — the modal already says what to do next, and the text
+          would only be legible in the strip of roll the panel leaves showing,
+          where it would sit behind falling notes. It comes back the moment the
+          modal closes on an empty roll. */}
       <Roll
-        notes={notes}
-        chords={chords}
+        notes={modalOpen ? MODAL_ROLL_NOTES : notes}
+        decorative={modalOpen}
+        chords={modalOpen ? EMPTY_CHORDS : chords}
         pps={PIXELS_PER_SECOND}
         containerRef={rollRef}
         layerRef={layerRef}
@@ -344,8 +438,8 @@ export default function App() {
           </div>
         }
       >
-        {view === "sheet" && musicxmlUrl && (
-          <Sheet musicxmlUrl={musicxmlUrl} caption={sheetCaption} />
+        {view === "sheet" && (musicxmlUrl || sheetNotice) && (
+          <Sheet musicxmlUrl={musicxmlUrl} caption={sheetCaption} notice={sheetNotice} />
         )}
         {busy && <Working stage={stage} onCancel={cancel} />}
       </Roll>
@@ -370,7 +464,8 @@ export default function App() {
       {modalOpen && (
         <UploadModal
           onStart={(source, crop) => void start(source, crop)}
-          modeLabel={modeLabel(mode)}
+          model={model}
+          onModel={setModel}
         />
       )}
 
@@ -392,17 +487,22 @@ function useEngine(): Engine {
   return engine;
 }
 
-function stageText(stage: Stage): string {
-  switch (stage) {
-    case "uploading":
-      return "uploading the clip";
-    case "queued":
-      return "queued at mirelo";
-    case "transcribing":
-      return "transcribing";
-    case "engraving":
-      return "engraving";
-  }
+/** What the overlay says, named for whichever backend is working. `detail` is
+ *  the queue position when there is one, which only the box reports. */
+function stageText(stage: Stage, service: string, detail?: string): string {
+  const head = (() => {
+    switch (stage) {
+      case "uploading":
+        return "uploading the clip";
+      case "queued":
+        return `queued at ${service}`;
+      case "transcribing":
+        return "transcribing";
+      case "engraving":
+        return "engraving";
+    }
+  })();
+  return detail ? `${head} · ${detail}` : head;
 }
 
 /** Light or clear one key. The unlit colour is the key's own, which is the
@@ -467,3 +567,39 @@ function residentArrangement(): Note[] {
 const MODAL_KEY_LOOP_NOTES = residentArrangement().filter(
   (note) => note.time < MODAL_KEY_LOOP_DURATION,
 );
+
+/** How far above the keyboard the decoration is laid out. Taller than any
+ *  window this runs in, which is the point: an over-estimate costs a few dozen
+ *  rectangles parked off the top of the roll and one layout on mount, and buys
+ *  not having to re-tile the whole thing every time the window is resized. */
+const MODAL_ROLL_LEAD_PIXELS = 2400;
+
+/**
+ * The same four beats the keys are lit from, tiled up and down the roll.
+ *
+ * The loop is worth about four hundred pixels at this zoom and the roll is
+ * several times that tall, so a single copy of it would spend most of the cycle
+ * as an empty column with a hard jump every time the clock wrapped. Repeating
+ * the figure at `time + k · duration` fills the whole height instead, and
+ * because the result is periodic in exactly the interval the transform wraps
+ * on, the wrap is invisible: every copy steps into the place the one below it
+ * has just left. The copy at k = −1 is the one still sounding under the
+ * keyboard at that moment, and without it the last note of the bar would blink
+ * out mid-sustain.
+ */
+const MODAL_ROLL_NOTES: Note[] = (() => {
+  const above = Math.ceil(MODAL_ROLL_LEAD_PIXELS / (MODAL_KEY_LOOP_DURATION * PIXELS_PER_SECOND));
+  const out: Note[] = [];
+  for (let k = -1; k <= above; k++) {
+    for (const note of MODAL_KEY_LOOP_NOTES) {
+      out.push({ ...note, time: note.time + k * MODAL_KEY_LOOP_DURATION });
+    }
+  }
+  return out;
+})();
+
+/** Reopening the modal after a transcription leaves that transcription's chords
+ *  in state, pinned to times the decoration knows nothing about — they would
+ *  sail past the loop at arbitrary moments. One shared empty array, so the
+ *  marks are torn down once instead of rebuilt on every render. */
+const EMPTY_CHORDS: Chord[] = [];
