@@ -113,9 +113,15 @@ export default function App() {
 
       // Which keys are down. Only the ones that changed are touched, so a
       // steady chord costs nothing after the frame it lands on.
+      const keyNotes = modalOpen ? MODAL_KEY_LOOP_NOTES : notes;
+      const keyTime = modalOpen
+        ? (performance.now() / 1000) % MODAL_KEY_LOOP_DURATION
+        : at;
       const now = new Map<number, string>();
-      for (const n of notes) {
-        if (n.time <= at && at < n.time + n.dur) now.set(n.midi, noteColor(n.hand, n.midi));
+      for (const n of keyNotes) {
+        if (n.time <= keyTime && keyTime < n.time + n.dur) {
+          now.set(n.midi, noteColor(n.hand, n.midi));
+        }
       }
       for (const midi of lit) {
         if (!now.has(midi)) paintKey(keyEls.current.get(midi), midi, null);
@@ -136,7 +142,7 @@ export default function App() {
       observer.disconnect();
       for (const midi of lit) paintKey(keyEls.current.get(midi), midi, null);
     };
-  }, [engine, notes, chords, playing]);
+  }, [engine, notes, chords, playing, modalOpen]);
 
   /* ── transport ────────────────────────────────────────────────────────── */
 
@@ -411,6 +417,7 @@ function paintKey(el: HTMLDivElement | undefined, midi: number, color: string | 
 
 const RESIDENT_BEAT = 60 / 72;
 const RESIDENT_DURATION = 8 * 4 * RESIDENT_BEAT;
+const MODAL_KEY_LOOP_DURATION = 4 * RESIDENT_BEAT;
 
 /**
  * Bach's C major prelude, so the page has something to play before it has
@@ -456,3 +463,7 @@ function residentArrangement(): Note[] {
   assignFingers(out);
   return out;
 }
+
+const MODAL_KEY_LOOP_NOTES = residentArrangement().filter(
+  (note) => note.time < MODAL_KEY_LOOP_DURATION,
+);
