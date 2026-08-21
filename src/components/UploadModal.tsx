@@ -132,8 +132,11 @@ export function UploadModal({
     [span],
   );
 
+  // Pointer events, not mouse ones: the same handler then serves a finger, and
+  // this drag is the whole point of the panel — on a touch screen the mouse
+  // version left the window nailed wherever `suggestCrop` put it.
   useEffect(() => {
-    const move = (e: MouseEvent) => {
+    const move = (e: PointerEvent) => {
       const offset = grab.current;
       const rect = wave.current?.getBoundingClientRect();
       if (offset === null || !rect) return;
@@ -142,18 +145,20 @@ export function UploadModal({
     const up = () => {
       grab.current = null;
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
     return () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
   }, [moveTo]);
 
-  /** Grab the window wherever it was clicked; clicking outside it centres it on
-   *  the pointer first, so a click at the far end of a long file still gets you
+  /** Grab the window wherever it was pressed; pressing outside it centres it on
+   *  the pointer first, so a tap at the far end of a long file still gets you
    *  there in one gesture. */
-  const startDrag = (e: React.MouseEvent) => {
+  const startDrag = (e: React.PointerEvent) => {
     const rect = wave.current?.getBoundingClientRect();
     if (!rect || !slidable) return;
     const at = (e.clientX - rect.left) / rect.width;
@@ -325,7 +330,7 @@ export function UploadModal({
                 className="wave"
                 ref={wave}
                 data-slidable={slidable ? 1 : 0}
-                onMouseDown={startDrag}
+                onPointerDown={startDrag}
               >
                 <div className="wave-bars">
                   {Array.from(source.peaks).map((amp, i) => {
@@ -345,7 +350,7 @@ export function UploadModal({
                 <button
                   className="wave-play"
                   style={{ left: `${(left + right) / 2}%` }}
-                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={togglePreview}
                   title={playing ? "stop the preview" : "preview these seconds"}
                 >
