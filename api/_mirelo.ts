@@ -15,6 +15,13 @@
  * Written against `node:http` types rather than `@vercel/node`, because the
  * same handlers are mounted by the Vite dev server (see `vite.config.ts`) and
  * that is the only signature both runtimes agree on.
+ *
+ * The endpoints import this file as `./_mirelo.js`, with the extension and
+ * with the wrong one. That is not a typo: this package is `"type": "module"`,
+ * so the compiled functions run as ESM under Node, where a relative import
+ * without an extension does not resolve at all — the first deploy answered
+ * every request with ERR_MODULE_NOT_FOUND. TypeScript and Vite both map the
+ * `.js` back to this `.ts`; Node needs to see the file it will actually load.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 

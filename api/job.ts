@@ -9,7 +9,7 @@
  * has decoded so far, which is what lets the roll fill in while the model is
  * still working instead of staying empty until the end.
  */
-import { INSTRUMENTS, json, mirelo, query, readJson, route } from "./_mirelo";
+import { INSTRUMENTS, json, mirelo, query, readJson, route } from "./_mirelo.js";
 
 const BASE = "/v2/audio-to-midi/v1.0";
 
