@@ -392,7 +392,6 @@ export default function App() {
       {modalOpen && (
         <UploadModal
           onStart={(source, crop) => void start(source, crop)}
-          canClose={notes.length > 0}
           model={modelById(model)}
         />
       )}
