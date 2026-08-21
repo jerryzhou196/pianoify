@@ -432,6 +432,22 @@ input::placeholder {
   min-height: 120px;
 }
 
+/* The tab with no page behind it yet: the box engraves a few seconds after the
+   notes, and this is what stands in — a line in the middle of the dark, rather
+   than a blank sheet of paper implying the score came out empty. */
+.sheet-waiting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  text-align: center;
+  font-size: 15px;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
 /* ── keyboard ────────────────────────────────────────────────────────────── */
 
 .keys {
