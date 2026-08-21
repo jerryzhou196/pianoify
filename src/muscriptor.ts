@@ -1,7 +1,8 @@
 import { muscriptorApi } from "./config";
 import { assignFingers, assignHands } from "./hands";
 import { TranscribeError, type TranscribeHandlers } from "./models";
-import type { BeatGrid, Note, Transcription } from "./types";
+import type { BeatGrid, Engraving, Note, Transcription } from "./types";
+import { fileFromZip } from "./zip";
 
 /**
  * Transcription on the rented GPU box.
@@ -20,6 +21,11 @@ import type { BeatGrid, Note, Transcription } from "./types";
  * Chords are not asked for here even though the box can recognize them: the
  * app has one chord source (the standalone service in `src/chords.ts`) and
  * having two would mean two chord tracks to reason about.
+ *
+ * Notation is a second request. `/sheets` runs MuseScore over a MIDI file and
+ * comes back with a zip of everything it engraved, so this backend fills the
+ * sheet-music tab a few seconds after the roll rather than with it — see
+ * `engrave` at the bottom of this file.
  */
 
 /** The only instrument this app has.
@@ -107,6 +113,7 @@ async function run(
   let grid: BeatGrid | null = null;
   let onsetDelay = 0;
   let midi: string | null = null;
+  let quantizedMidi: string | null = null;
   let duration = 0;
   let started = false;
   let drawnAt = 0;
@@ -171,7 +178,7 @@ async function run(
         if (g && Number(g.bpm) > 0) {
           grid = {
             bpm: Number(g.bpm),
-            beatsPerBar: Number(g.beats_per_bar) || 4,
+            beatsPerBar: Number(g.beats_per_bar) || null,
             firstDownbeat: Number(g.first_downbeat) || 0,
             // The box only sends a grid when it found one in the audio, so
             // there is no defaulted map to disbelieve the way Mirelo's has.
@@ -180,6 +187,11 @@ async function run(
         }
         onsetDelay = Number(g?.onset_delay) || 0;
         midi = typeof ev.data === "string" ? ev.data : null;
+        // A second copy with the notes moved onto the detected beats. It is
+        // what the notation should be engraved from where it exists: bar lines
+        // and note values come out of a grid, and a performance that is a few
+        // milliseconds off one reads as a page of tied thirty-seconds.
+        quantizedMidi = typeof ev.quantized_midi === "string" ? ev.quantized_midi : null;
         break;
       }
     }
@@ -199,6 +211,18 @@ async function run(
     duration = Math.max(0, duration - onsetDelay);
   }
 
+  // What the notation gets engraved from. The quantized copy where the box
+  // wrote one, since bar lines and note values come out of a grid and a
+  // performance a few milliseconds off one reads as a page of tied
+  // thirty-seconds; otherwise the performance MIDI, which engraves into
+  // something messier but still readable. Neither, and there is nothing to
+  // send — the stream ended early, and the roll is all there is.
+  const notation = quantizedMidi
+    ? { midi: quantizedMidi, quantized: true }
+    : midi
+      ? { midi, quantized: false }
+      : null;
+
   return {
     notes: playable(notes),
     grid,
@@ -207,9 +231,10 @@ async function run(
     timing: { requested: "performance", applied: "performance", fallbackReason: null },
     duration,
     midiUrl: midi ? midiObjectUrl(midi) : null,
-    // No engraver on the box. The sheet-music tab stays disabled, which is
-    // what its own `disabled` already says when there is no MusicXML.
+    // The box engraves on request rather than alongside the notes, so this
+    // arrives a few seconds after the roll does — see `engrave` below.
     musicxmlUrl: null,
+    engrave: notation ? () => engrave(notation.midi, notation.quantized) : undefined,
   };
 }
 
@@ -273,14 +298,64 @@ function shapeDynamics(notes: Note[]): void {
  *  no URL to hand over until one is made here. `App.tsx` revokes it when the
  *  next transcription replaces it. */
 function midiObjectUrl(base64: string): string | null {
+  const bytes = decodeBase64(base64);
+  // A truncated or malformed payload. The notes are still good; only the
+  // export button has nothing to point at.
+  if (!bytes) return null;
+  return URL.createObjectURL(new Blob([bytes], { type: "audio/midi" }));
+}
+
+function decodeBase64(base64: string): Uint8Array<ArrayBuffer> | null {
   try {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return URL.createObjectURL(new Blob([bytes], { type: "audio/midi" }));
+    return bytes;
   } catch {
-    // A truncated or malformed payload. The notes are still good; only the
-    // export button has nothing to point at.
+    return null;
+  }
+}
+
+/**
+ * Engrave a transcription's MIDI, and hand back its MusicXML.
+ *
+ * `/sheets` renders a whole folder — a full score and a part as PDFs, the MIDI
+ * back again, and the MusicXML — and returns them as one zip. Only the
+ * MusicXML is wanted here, because the sheet-music tab engraves it itself with
+ * OpenSheetMusicDisplay rather than showing a PDF, which is what lets the page
+ * lay it out at the reader's width.
+ *
+ * It takes a few seconds: MuseScore is a real program doing a real layout, and
+ * it runs on the box's CPU rather than the GPU the notes came off. Which is
+ * the whole reason this is a second call — holding the roll back for it would
+ * trade the thing the box is good at for the thing it is slow at.
+ *
+ * Never throws. Notation is an extra on this backend: the notes are already on
+ * the roll and playing, and a box that could not engrave them should cost the
+ * sheet-music tab, nothing more.
+ */
+async function engrave(base64Midi: string, quantized: boolean): Promise<Engraving | null> {
+  try {
+    const bytes = decodeBase64(base64Midi);
+    if (!bytes) return null;
+    const form = new FormData();
+    form.append("midi", new Blob([bytes], { type: "audio/midi" }), "transcription.mid");
+    // Not an instruction to quantize — the box does not — but a statement that
+    // this upload already is, which is what lets it write bar lines and note
+    // values from the grid rather than from the timings.
+    form.append("quantized", String(quantized));
+
+    const resp = await fetch(muscriptorApi("/sheets"), { method: "POST", body: form });
+    if (!resp.ok) return null;
+
+    const xml = fileFromZip(await resp.arrayBuffer(), "score.musicxml");
+    if (!xml) return null;
+    const url = URL.createObjectURL(
+      new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }),
+    );
+    return { url, quantized };
+  } catch {
+    // Offline, refused, or an archive shaped differently than it was.
     return null;
   }
 }
