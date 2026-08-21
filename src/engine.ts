@@ -48,14 +48,11 @@ export class Engine {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   private pianoBus!: GainNode;
-  private chordBus!: GainNode;
   private originalBus!: GainNode;
   private boardSend!: GainNode;
 
   private notes: Note[] = [];
-  private chordNotes: Note[] = [];
   private noteCursor = 0;
-  private chordCursor = 0;
   private buffer: AudioBuffer | null = null;
   private source: AudioBufferSourceNode | null = null;
 
@@ -72,7 +69,15 @@ export class Engine {
   private grid: BeatGrid | null = null;
   /** 0 = original recording only, 1 = piano only. */
   private mix = 0.72;
-  private chordsOn = false;
+  /** Playback speed. 1 is as transcribed; everything scheduled is divided by
+   *  it, and the recording is resampled by it — which shifts the recording's
+   *  pitch, the way slowing a tape does. The piano does not shift, because its
+   *  notes are re-synthesized at the pitch they were written at, so at 0.5×
+   *  the transcription stays in tune and the recording under it does not. That
+   *  is the honest trade for a control whose job is to let you follow a fast
+   *  passage, and it is why the crossfade usually wants to be on the piano
+   *  side when this is not 1. */
+  private rate = 1;
   duration = 0;
   playing = false;
 
@@ -123,13 +128,6 @@ export class Engine {
     this.pianoBus.connect(this.master);
     this.pianoBus.connect(this.boardSend);
 
-    // Chords comp *under* the transcription, so they get their own trim rather
-    // than relying on every chord voice being written quieter.
-    this.chordBus = ctx.createGain();
-    this.chordBus.gain.value = 0.34;
-    this.chordBus.connect(this.master);
-    this.chordBus.connect(this.boardSend);
-
     this.originalBus = ctx.createGain();
     this.originalBus.connect(this.master);
 
@@ -152,7 +150,6 @@ export class Engine {
     const piano = this.buffer ? this.mix : 1;
     const original = this.buffer ? 1 - this.mix : 0;
     this.pianoBus.gain.setTargetAtTime(piano, t, 0.02);
-    this.chordBus.gain.setTargetAtTime(piano * 0.34 * (this.chordsOn ? 1 : 0), t, 0.02);
     this.originalBus.gain.setTargetAtTime(original, t, 0.02);
   }
 
@@ -180,11 +177,6 @@ export class Engine {
     this.applyPedal();
   }
 
-  setChordsEnabled(on: boolean) {
-    this.chordsOn = on;
-    this.applyMix();
-  }
-
   /* ── material ──────────────────────────────────────────────────────────── */
 
   /** The detected tempo map, used to re-pedal on the bar when there is no
@@ -201,33 +193,18 @@ export class Engine {
     if (this.playing) this.reseek();
   }
 
-  /** Voice the chord track as a sustained pad: each chord is held until the
-   *  next one starts. `root` and `intervals` come straight off the recognizer,
-   *  so no music theory is needed here — `48 + root + interval` puts the chord
-   *  just below middle C, which is where a comping hand sits, and root position
-   *  throughout keeps it from lurching an octave whenever the root crosses B. */
+  /** Take the chord track — not to play it, but to pedal on it.
+   *
+   *  Nothing here sounds a chord. The harmony is drawn on the roll and named in
+   *  the transport, and the one thing it does to the audio is decide where the
+   *  damper pedal comes up. */
   setChords(chords: Chord[]) {
-    const out: Note[] = [];
-    for (let i = 0; i < chords.length; i++) {
-      const { time, root, intervals } = chords[i];
-      // An "N.C." span carries no root: nothing is scheduled, which is exactly
-      // how the chord before it gets to stop.
-      if (root === null || !intervals.length) continue;
-      const end = i + 1 < chords.length ? chords[i + 1].time : this.duration || time + 4;
-      if (end <= time) continue;
-      for (const semis of intervals) {
-        out.push({ midi: 48 + root + semis, time, dur: end - time, vel: 0.5 });
-      }
-    }
-    out.sort((a, b) => a.time - b.time);
-    this.chordNotes = out;
-    // Every chord change is also a pedal change. A pianist does not hold the
+    // Every chord change is a pedal change. A pianist does not hold the
     // damper pedal down for fifteen seconds; they re-pedal on the harmony,
     // which is the only thing that lets a pedalled passage stay pedalled
     // without turning into a chord of everything played so far. With no chord
     // track there is nothing to re-pedal against, and the strings ring free.
     this.lifts = chords.map((c) => c.time).filter((t) => t > 0);
-    if (this.playing) this.reseek();
   }
 
   /** Hand over the decoded clip so it can be crossfaded against the piano. */
@@ -241,7 +218,34 @@ export class Engine {
 
   get position(): number {
     if (!this.playing || !this.ctx) return this.pausedAt;
-    return Math.max(0, this.ctx.currentTime - this.origin);
+    return Math.max(0, (this.ctx.currentTime - this.origin) * this.rate);
+  }
+
+  /** Context time a piece-time position falls at. Every scheduling decision
+   *  goes through here, which is all `rate` has to touch: the piece is laid out
+   *  in its own seconds and stretched onto the clock exactly once. */
+  private clockTime(position: number): number {
+    return this.origin + position / this.rate;
+  }
+
+  /** Change playback speed, keeping the current position. Notes already handed
+   *  to WebAudio keep the speed they were scheduled at, so the change is heard
+   *  from the next note on — which is why everything ringing is stopped and
+   *  re-seeked rather than left to finish at the old rate. */
+  setSpeed(rate: number) {
+    const next = Math.max(0.25, Math.min(2, rate));
+    if (next === this.rate) return;
+    if (!this.playing) {
+      this.rate = next;
+      return;
+    }
+    const at = this.position;
+    this.silence();
+    this.rate = next;
+    this.origin = this.audio().currentTime - at / this.rate + 0.08;
+    this.reseek();
+    this.startOriginal();
+    this.pump();
   }
 
   play() {
@@ -253,7 +257,7 @@ export class Engine {
     if (this.pausedAt >= this.duration - 0.05) this.pausedAt = 0;
     // A beat of headroom so the first notes are scheduled ahead of the clock
     // rather than fired the instant they are seen.
-    this.origin = ctx.currentTime - this.pausedAt + 0.08;
+    this.origin = ctx.currentTime - this.pausedAt / this.rate + 0.08;
     this.playing = true;
     this.reseek();
     this.startOriginal();
@@ -273,7 +277,7 @@ export class Engine {
     const to = Math.max(0, Math.min(seconds, this.duration));
     if (this.playing) {
       this.silence();
-      this.origin = this.audio().currentTime - to + 0.08;
+      this.origin = this.audio().currentTime - to / this.rate + 0.08;
       this.reseek();
       this.startOriginal();
       this.pump();
@@ -332,13 +336,6 @@ export class Engine {
     while (this.noteCursor < this.notes.length && this.notes[this.noteCursor].time < at) {
       this.noteCursor++;
     }
-    this.chordCursor = 0;
-    while (
-      this.chordCursor < this.chordNotes.length &&
-      this.chordNotes[this.chordCursor].time < at
-    ) {
-      this.chordCursor++;
-    }
   }
 
   private startOriginal() {
@@ -349,9 +346,12 @@ export class Engine {
     const src = ctx.createBufferSource();
     src.buffer = this.buffer;
     src.connect(this.originalBus);
+    // Resampling, not time-stretching: at half speed the recording drops an
+    // octave. See `rate`.
+    src.playbackRate.value = this.rate;
     // (when, offset): the recording is placed against the same origin the notes
     // are, which is the only thing keeping the two in sync.
-    src.start(this.origin + offset, offset);
+    src.start(this.clockTime(offset), offset);
     this.source = src;
   }
 
@@ -363,21 +363,17 @@ export class Engine {
 
     while (this.noteCursor < this.notes.length) {
       const n = this.notes[this.noteCursor];
-      if (this.origin + n.time >= until) break;
+      const at = this.clockTime(n.time);
+      if (at >= until) break;
       this.noteCursor++;
-      this.spawn(n.midi, Math.max(ctx.currentTime, this.origin + n.time), n.dur, n.vel, this.pianoBus);
-    }
-    while (this.chordCursor < this.chordNotes.length) {
-      const n = this.chordNotes[this.chordCursor];
-      if (this.origin + n.time >= until) break;
-      this.chordCursor++;
+      // The sounding length is stretched with everything else — a note played
+      // at half speed is held twice as long, and decays over twice as long.
       this.spawn(
         n.midi,
-        Math.max(ctx.currentTime, this.origin + n.time),
-        n.dur,
+        Math.max(ctx.currentTime, at),
+        n.dur / this.rate,
         n.vel,
-        this.chordBus,
-        true,
+        this.pianoBus,
       );
     }
 
@@ -503,17 +499,17 @@ export class Engine {
   private nextLift(after: number): number {
     // A hair of slack: a note struck exactly on the change belongs to the
     // chord it opens, not to the one it just ended.
-    const at = after - this.origin + 0.02;
+    const at = (after - this.origin) * this.rate + 0.02;
     if (this.lifts.length) {
-      for (const t of this.lifts) if (t > at) return this.origin + t;
-      return this.origin + this.duration + 8;
+      for (const t of this.lifts) if (t > at) return this.clockTime(t);
+      return this.clockTime(this.duration + 8);
     }
     const bar =
       this.grid && this.grid.bpm > 0
         ? (60 / this.grid.bpm) * (this.grid.beatsPerBar || 4)
         : 2;
     const phase = this.grid?.firstDownbeat ?? 0;
-    return this.origin + phase + (Math.floor((at - phase) / bar) + 1) * bar;
+    return this.clockTime(phase + (Math.floor((at - phase) / bar) + 1) * bar);
   }
 
   /** Ceiling on simultaneous ringing strings.

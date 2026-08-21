@@ -1,388 +1,1003 @@
-/* App styling on top of the design system. Anything here is pianoify's, not
-   the system's — tokens and component classes live in ds/classical.css. */
+/**
+ * The design, as a stylesheet.
+ *
+ * Every value here comes from the Claude Design project this was drawn in
+ * (`Pianoify.dc.html`), where it is written as inline style on each element
+ * because that format has nowhere else to put it. Translating it into tokens
+ * and classes is the only liberty taken: the numbers, the greys and the
+ * proportions are the design's.
+ */
 
 :root {
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace;
-  /* The checkerboard behind the roll frame. Tied to the text colour so it
-     stays a shadow of the ink rather than a fixed grey. */
-  --dither: color-mix(in srgb, var(--color-text) 26%, transparent);
-  --muted: color-mix(in srgb, var(--color-text) 55%, transparent);
+  --bg: #000000;
+  --panel: #0b0b0b;
+  --panel-deep: #050505;
+
+  --line: #191919;
+  --edge: #1e1e1e;
+  --edge-soft: #232323;
+  --edge-mid: #262626;
+  --edge-strong: #2a2a2a;
+
+  --ink: #ffffff;
+  --ink-soft: #cfcfcf;
+  --ink-dim: #b4b4b4;
+  --muted: #7d7d7d;
+  --faint: #5a5a5a;
+  --fainter: #4c4c4c;
+
+  --left-hand: #3ddc97;
+  --right-hand: #78bcff;
+
+  --sans: "DM Sans", Helvetica, Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html,
-body,
-#root {
+body {
   margin: 0;
-  height: 100%;
+  padding: 0;
+  background: var(--bg);
 }
 
-a:hover {
-  color: var(--color-accent-700);
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+input::placeholder {
+  color: var(--fainter);
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
 }
 
 .mono {
   font-family: var(--mono);
 }
 
-/* The app is one non-scrolling screen: the roll is the thing that moves. */
-.app {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--color-bg);
-  color: var(--color-text);
-  overflow: hidden;
-}
+/* ── top bar ─────────────────────────────────────────────────────────────── */
 
-/* — status strip — */
-.strip {
+.bar {
+  height: 46px;
+  flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 5px var(--space-6);
-  border-bottom: 1px solid var(--color-divider);
-  background: var(--color-neutral-100);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: color-mix(in srgb, var(--color-text) 60%, transparent);
-}
-.strip-kicker {
-  color: var(--color-accent-700);
-}
-.strip-spacer {
-  flex: 1;
+  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
 }
 
-/* — header — */
-.head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-6);
-  padding: var(--space-4) var(--space-6) var(--space-3);
-}
-.head h1 {
-  font-size: 30px;
-  font-weight: 400;
-  margin: 0;
-  letter-spacing: -0.02em;
-}
-.head-title {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  border-bottom: 1px solid var(--color-divider);
-  padding-bottom: 3px;
-}
-.head-title > .name {
-  font-family: var(--font-heading);
-  font-size: 17px;
+.chip {
+  height: 28px;
+  padding: 0 11px;
+  flex: none;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.head-title > .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--edge-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 11px;
-  color: color-mix(in srgb, var(--color-text) 50%, transparent);
-  white-space: nowrap;
+  cursor: pointer;
 }
 
-/* A select and a file-input label styled to sit on the same baseline as the
-   mono readouts around them. */
+.chip:hover:not(:disabled) {
+  border-color: #555555;
+}
+
+.chip .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.chip .caret {
+  color: #6a6a6a;
+  font-size: 9px;
+}
+
 .picker {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--color-text);
-  background: var(--color-neutral-100);
-  border: 1px solid var(--color-neutral-500);
-  border-radius: var(--radius-sm);
-  padding: 4px var(--space-2);
-  cursor: pointer;
-}
-.picker:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.file-btn {
-  cursor: pointer;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0;
-}
-.file-btn input {
-  display: none;
+  position: relative;
 }
 
-/* — the framed roll — */
-.stage {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  padding: 0 var(--space-6) var(--space-6);
-  display: flex;
-}
-/* Offset a few pixels down and right of the frame, so the frame reads as a
-   plate sitting on a printed ground. */
-.stage-dither {
+.picker-menu {
   position: absolute;
-  left: calc(var(--space-6) + 7px);
-  right: calc(var(--space-6) - 7px);
-  top: 7px;
-  bottom: calc(var(--space-6) - 7px);
-  background-image: repeating-conic-gradient(
-    from 0deg at 50% 50%,
-    var(--dither) 0deg 90deg,
-    transparent 90deg 180deg
-  );
-  background-size: 4px 4px;
-  pointer-events: none;
-}
-.frame {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--color-neutral-500);
-  background: var(--color-bg);
+  top: 34px;
+  left: 0;
+  width: 288px;
+  background: var(--panel);
+  border: 1px solid var(--edge-mid);
+  border-radius: 9px;
+  padding: 5px;
+  z-index: 40;
 }
 
-.rail {
+.picker-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.picker-option[aria-selected="true"] {
+  background: #1c1c1c;
+}
+
+.picker-option:hover {
+  background: #161616;
+}
+
+.picker-option .head {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 3px var(--space-2);
-  border-bottom: 1px solid var(--color-divider);
-  background: var(--color-neutral-100);
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.picker-option .name {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.picker-option .tag {
   font-family: var(--mono);
   font-size: 10px;
-  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  color: #6a6a6a;
+}
+
+.picker-option .note {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: left;
+  line-height: 1.35;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  flex: none;
+}
+
+.tab {
+  height: 22px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
   white-space: nowrap;
-  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--muted);
 }
-.rail-spacer {
+
+.tab[aria-selected="true"] {
+  background: var(--ink);
+  color: #000000;
+}
+
+.tab:disabled {
+  cursor: default;
+  color: var(--fainter);
+}
+
+.bar-file {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.rail-chord {
-  color: var(--color-accent-700);
-  font-variant-numeric: tabular-nums;
+
+.bar-file .name {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.ghost {
+  height: 22px;
+  padding: 0 8px;
+  flex: none;
+  white-space: nowrap;
+  border: 1px solid var(--edge-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ghost:hover:not(:disabled) {
+  border-color: #555555;
+  color: var(--ink);
+}
+
+.action {
+  height: 28px;
+  padding: 0 12px;
+  flex: none;
+  white-space: nowrap;
+  border: 1px solid var(--edge-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.action.primary {
+  border-color: var(--ink);
+  background: transparent;
+  color: var(--ink);
+}
+
+.action.primary:hover:not(:disabled) {
+  background: var(--ink);
+  color: #000000;
+}
+
+.action:disabled,
+.ghost:disabled,
+.chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── the roll ────────────────────────────────────────────────────────────── */
 
 .roll {
   flex: 1;
-  min-height: 0;
   position: relative;
   overflow: hidden;
-  background: linear-gradient(var(--color-neutral-100), var(--color-bg));
+  background: var(--bg);
 }
-/* The layer that moves. Everything inside is positioned from `bottom`, so time
-   runs upward and the notes fall toward the playhead at the bottom edge. */
-.roll-scroll {
+
+.roll-octave {
   position: absolute;
-  inset: 0;
-  will-change: transform;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #141414;
 }
-.roll-fade {
+
+.roll-layer {
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: 90px;
-  background: linear-gradient(var(--color-neutral-100), transparent);
-  pointer-events: none;
-}
-.roll-playhead {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: var(--color-accent);
-  opacity: 0.75;
+  height: 0;
+  will-change: transform, opacity;
 }
 
-/* — chord bands — */
-.chord-line {
+.roll-note {
+  position: absolute;
+  border-radius: 2px;
+  border: 1px solid transparent;
+}
+
+.roll-finger {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.roll-chord {
   position: absolute;
   left: 0;
   right: 0;
   height: 0;
-  border-top: 1px dashed color-mix(in srgb, var(--color-accent-2) 45%, transparent);
+  display: flex;
+  align-items: center;
+  z-index: 8;
+}
+
+.roll-chord .rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.roll-chord .label {
+  position: relative;
+  margin-left: 12px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #000000;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  transform: translateY(-50%);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
   cursor: pointer;
 }
-.chord-label {
+
+.roll-empty {
   position: absolute;
-  left: 3px;
-  bottom: 2px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-accent-2-700);
-  border: 1px solid color-mix(in srgb, var(--color-accent-2) 35%, transparent);
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
   pointer-events: none;
-  white-space: nowrap;
 }
-.chord-line[data-off="1"] {
+
+.roll-empty .headline {
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+
+.roll-empty .sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.07em;
+}
+
+.roll-error {
+  color: #ff8f8f;
+}
+
+/* ── sheet music ─────────────────────────────────────────────────────────── */
+
+.sheet {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  overflow: auto;
+  z-index: 12;
+  padding: 14px;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.sheet-head span {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--faint);
+  letter-spacing: 0.1em;
+}
+
+.sheet-paper {
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 18px 16px 24px;
+  min-height: 120px;
+}
+
+/* ── keyboard ────────────────────────────────────────────────────────────── */
+
+.keys {
+  height: 200px;
+  flex: none;
+  position: relative;
+  background: var(--bg);
+}
+
+.key {
+  position: absolute;
+  top: 0;
+  border-radius: 0 0 2px 2px;
+  cursor: pointer;
+}
+
+.key.white {
+  height: 100%;
+  background: #ffffff;
+  border: 1px solid #000000;
+  z-index: 1;
+}
+
+.key.black {
+  height: 62%;
+  background: #0a0a0a;
+  border: 1px solid var(--edge-mid);
+  z-index: 3;
+}
+
+/* ── transport ───────────────────────────────────────────────────────────── */
+
+.transport {
+  height: 62px;
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+}
+
+.scrub {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: #1c1c1c;
+  cursor: pointer;
+}
+
+.scrub .fill {
+  height: 100%;
+  width: 0%;
+  background: var(--ink);
+}
+
+.transport-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.icon-button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: #141414;
+  color: var(--ink);
+}
+
+.play {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #000000;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.play:hover:not(:disabled) {
+  background: var(--ink-soft);
+}
+
+.play:disabled {
+  background: #2a2a2a;
+  color: var(--faint);
+  cursor: default;
+}
+
+.clock {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: #9a9a9a;
+  min-width: 88px;
+}
+
+.chord-now {
+  min-width: 42px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--edge-strong);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  text-align: center;
+}
+
+.blend {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.blend-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.blend-label[data-active="1"] {
+  color: var(--left-hand);
+}
+
+.blend-label.right[data-active="1"] {
+  color: var(--right-hand);
+}
+
+.blend-track {
+  position: relative;
+  flex: 1;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.blend-track .rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #2fbb87 0%, #3a9fb4 52%, #4589d6 100%);
+}
+
+.blend-track .knob {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid #2fbb87;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6);
+}
+
+.blend-track[data-disabled="1"] {
+  cursor: default;
   opacity: 0.4;
 }
 
-/* — busy overlay — */
-.overlay {
+.speed {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.step {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--edge-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.step:hover:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.speed .value {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  min-width: 32px;
+  text-align: center;
+}
+
+/* ── modal ───────────────────────────────────────────────────────────────── */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(14px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.modal {
+  width: 720px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  background: var(--panel-deep);
+  border: 1px solid var(--edge-soft);
+  border-radius: 14px;
+  padding: 22px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modal-head .title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+.close {
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--ink);
+}
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 132px;
+  border: 1px dashed #2c2c2c;
+  border-radius: 11px;
+  background: #0a0a0a;
+  cursor: pointer;
+}
+
+.drop[data-hot="1"] {
+  border-color: var(--ink);
+  background: #0f0f0f;
+}
+
+.drop .headline {
+  font-size: 13.5px;
+  color: #e2e2e2;
+}
+
+.drop .hint {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fainter);
+  letter-spacing: 0.07em;
+}
+
+.or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.or .rule {
+  flex: 1;
+  height: 1px;
+  background: #1c1c1c;
+}
+
+.or span {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fainter);
+  letter-spacing: 0.1em;
+}
+
+.url {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 4px 0 11px;
+  border: 1px solid var(--edge-mid);
+  border-radius: 7px;
+  background: var(--panel);
+}
+
+.url .tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.08em;
+  flex: none;
+}
+
+.url input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.url button {
+  height: 23px;
+  padding: 0 10px;
+  flex: none;
+  white-space: nowrap;
+  border: none;
+  border-radius: 5px;
+  background: var(--ink);
+  color: #000000;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.url button:hover:not(:disabled) {
+  background: var(--ink-soft);
+}
+
+.url button:disabled {
+  background: #2a2a2a;
+  color: var(--faint);
+  cursor: default;
+}
+
+.modal-error {
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #ff8f8f;
+}
+
+.trim {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #171717;
+  user-select: none;
+}
+
+.trim-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.trim-head .caption {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--faint);
+  letter-spacing: 0.1em;
+}
+
+.trim-head .readout {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: #8a8a8a;
+  letter-spacing: 0.06em;
+}
+
+.wave {
+  position: relative;
+  height: 84px;
+  cursor: text;
+}
+
+.wave-bars {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
-}
-.overlay-card {
-  font-family: var(--mono);
-  font-size: 13px;
-  letter-spacing: 0.01em;
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-neutral-500);
-  background: var(--color-bg);
-  text-align: center;
-  max-width: 70%;
-}
-.overlay-bar {
-  height: 2px;
-  margin-top: var(--space-2);
-  background: var(--color-neutral-300);
-}
-.overlay-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--color-accent);
-  transition: width 240ms linear;
+  gap: 1px;
 }
 
-/* — keyboard — */
-.keys {
-  position: relative;
-  height: 104px;
-  border-top: 1px solid var(--color-neutral-500);
-  background: var(--color-neutral-200);
+.wave-bars i {
+  flex: 1;
+  background: var(--ink);
+  border-radius: 1px;
+  opacity: 0.22;
 }
-.key-white {
+
+.wave-bars i[data-in="1"] {
+  opacity: 0.9;
+}
+
+.wave-mask {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: var(--color-neutral-100);
-  border-right: 1px solid var(--color-divider);
-  cursor: pointer;
-}
-.key-black {
-  position: absolute;
-  top: 0;
-  height: 62%;
-  background: var(--color-neutral-900);
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-  z-index: 2;
-  cursor: pointer;
-}
-.key-white[data-lit="1"] {
-  background: var(--color-accent-200);
-}
-.key-black[data-lit="1"] {
-  background: var(--color-accent-600);
-}
-/* The chord pad marks its keys along the front edge instead of filling them.
-   The two accent ramps in this system are all but the same colour, so hue
-   cannot carry the difference — but a note *sounding* and a harmony *being
-   held under it* are different things, and the eye reads a fill against a bar
-   without being told which is which. A key doing both shows both. */
-.key-white[data-lit="2"],
-.key-white[data-lit="1"][data-chord="1"] {
-  box-shadow: inset 0 -9px 0 var(--color-accent-2-400);
-}
-.key-black[data-lit="2"],
-.key-black[data-lit="1"][data-chord="1"] {
-  box-shadow: inset 0 -7px 0 var(--color-accent-2-300);
-}
-.octave-mark {
-  position: absolute;
-  bottom: 6px;
-  font-size: 8px;
-  letter-spacing: 0.08em;
-  font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, var(--color-text) 45%, transparent);
-  pointer-events: none;
+  background: rgba(0, 0, 0, 0.74);
 }
 
-/* — footer — */
-.foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: 0 var(--space-6) var(--space-4);
-}
-.foot .mono {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.foot-spacer {
-  flex: 1;
-}
-.foot-divider {
-  width: 1px;
-  height: 18px;
-  background: var(--color-divider);
-}
-.mix {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-family: var(--mono);
-  font-size: 10px;
-  color: color-mix(in srgb, var(--color-text) 55%, transparent);
-}
-.mix input {
-  width: 132px;
-  accent-color: var(--color-accent);
-  cursor: pointer;
-}
-.mix-value {
-  font-variant-numeric: tabular-nums;
-  min-width: 54px;
-  color: var(--color-accent-700);
-}
-.transport {
-  min-width: 96px;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0;
-}
-.link-btn {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0;
-}
-/* The chords toggle reads as pressed when the pad is sounding, in the second
-   accent so it is tied to the bands drawn in the roll. */
-.chip-on {
-  color: var(--color-accent-2-800);
-  border-color: var(--color-accent-2);
-  background: color-mix(in srgb, var(--color-accent-2) 14%, transparent);
+.wave-mask.left {
+  left: 0;
+  border-right: 1px solid var(--ink);
 }
 
-/* — drop target — */
-.drop {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
+.wave-mask.right {
+  right: 0;
+  border-left: 1px solid var(--ink);
+}
+
+.wave-handle {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 11px;
+  margin-left: -5px;
+  cursor: ew-resize;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg);
-  border: 2px dashed var(--color-accent);
+  z-index: 5;
+}
+
+.wave-handle i {
+  width: 3px;
+  height: 100%;
+  background: var(--ink);
+  border-radius: 2px;
+}
+
+.wave-head {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 1px;
+  background: var(--ink);
+  opacity: 0.5;
+  z-index: 6;
+}
+
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.modal-foot .quote {
   font-family: var(--mono);
-  font-size: 14px;
-  color: var(--color-accent-700);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.go {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 7px;
+  background: var(--ink);
+  color: #000000;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.go:hover:not(:disabled) {
+  background: var(--ink-soft);
+}
+
+.go:disabled {
+  background: #2a2a2a;
+  color: var(--faint);
+  cursor: default;
+}
+
+/* ── working strip ───────────────────────────────────────────────────────── */
+
+.working {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 38px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--edge-mid);
+  border-radius: 9px;
+  background: rgba(11, 11, 11, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 15px;
+}
+
+.meter i {
+  width: 3px;
+  background: var(--ink);
+  transform-origin: bottom;
+  animation: pf-bar 0.62s ease-in-out infinite alternate;
+}
+
+@keyframes pf-bar {
+  0% {
+    transform: scaleY(0.3);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+.working .stage {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter i {
+    animation: none;
+    transform: scaleY(0.7);
+  }
 }

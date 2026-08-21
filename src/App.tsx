@@ -1,109 +1,128 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "./components/Keyboard";
 import { Roll } from "./components/Roll";
-import { CLIP_SECONDS, chordServiceEnabled } from "./config";
-import { Engine, type Pedal } from "./engine";
-import { SilentAudioError, makeClip } from "./clip";
-import { TranscribeError, analyzeChords, transcribe, warmChordService } from "./api";
-import { clock } from "./roll";
-import type { BeatGrid, Chord, Note } from "./types";
+import { Sheet } from "./components/Sheet";
+import { TopBar } from "./components/TopBar";
+import { Transport } from "./components/Transport";
+import { UploadModal } from "./components/UploadModal";
+import { Working } from "./components/Working";
+import { PIXELS_PER_SECOND, chordServiceEnabled } from "./config";
+import { cropBuffer, cropSeconds, cropToWav, type Crop, type Source } from "./audio";
+import { analyzeChords, chordAt, warmChordService } from "./chords";
+import { Engine } from "./engine";
+import { assignFingers, assignHands } from "./hands";
+import { MireloError, modeLabel, transcribe, type Stage, type TimingMode } from "./mirelo";
+import { clock, isBlack, noteColor } from "./roll";
+import type { BeatGrid, Chord, Note, Timing } from "./types";
 
-/** Pixels per second of music. Fixed: at 110 a bar of anything moderate is
- *  about a thumb's width, which is the zoom the roll was designed at. */
-const PPS = 110;
-
-type Phase = "idle" | "reading" | "queued" | "working" | "ready" | "error";
-
-interface Loaded {
-  title: string;
-  /** Where in the original file the transcribed clip starts. */
-  offset: number;
-  source: string;
-}
+type Phase = "idle" | "working" | "ready" | "error";
 
 export default function App() {
   const engine = useEngine();
 
-  const [notes, setNotes] = useState<Note[]>(() => residentArrangement());
+  const [notes, setNotes] = useState<Note[]>(residentArrangement);
   const [chords, setChords] = useState<Chord[]>([]);
   const [grid, setGrid] = useState<BeatGrid | null>(null);
   const [duration, setDuration] = useState(RESIDENT_DURATION);
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [timing, setTiming] = useState<Timing | null>(null);
+  const [midiUrl, setMidiUrl] = useState<string | null>(null);
+  const [musicxmlUrl, setMusicxmlUrl] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>("bach · prelude in c");
 
+  const [mode, setMode] = useState<TimingMode>("performance");
+  const [view, setView] = useState<"roll" | "sheet">("roll");
+  const [modalOpen, setModalOpen] = useState(true);
   const [phase, setPhase] = useState<Phase>("idle");
-  const [status, setStatus] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
   const [playing, setPlaying] = useState(false);
-  const [pedal, setPedal] = useState<Pedal>("on");
-  const [mix, setMix] = useState(0.72);
-  const [chordsOn, setChordsOn] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const [blend, setBlend] = useState(0);
+  const [speed, setSpeed] = useState(1);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const timeRef = useRef<HTMLSpanElement>(null);
-  const railRef = useRef<HTMLSpanElement>(null);
+  const rollRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const scrubRef = useRef<HTMLDivElement>(null);
+  const clockRef = useRef<HTMLSpanElement>(null);
   const chordRef = useRef<HTMLSpanElement>(null);
-  /** The run that owns the UI. A second upload supersedes the first, and every
-   *  await in the older run checks this before writing anything back. */
+  const keyEls = useRef(new Map<number, HTMLDivElement>());
+  const rollHeight = useRef(0);
+  /** The run that owns the UI. A second transcription supersedes the first, and
+   *  every await in the older run checks this before writing anything back. */
   const runRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const busy = phase === "reading" || phase === "queued" || phase === "working";
+  const busy = phase === "working";
 
   /* ── keep the engine in step with the state above ─────────────────────── */
 
   useEffect(() => engine.setNotes(notes, duration), [engine, notes, duration]);
   useEffect(() => engine.setGrid(grid), [engine, grid]);
-  useEffect(() => engine.setChords(chords), [engine, chords, duration]);
-  useEffect(() => engine.setPedal(pedal), [engine, pedal]);
-  useEffect(() => engine.setMix(mix), [engine, mix]);
-  useEffect(() => engine.setChordsEnabled(chordsOn), [engine, chordsOn]);
+  useEffect(() => engine.setChords(chords), [engine, chords]);
+  // The slider runs transcribed → original; the engine's mix runs the other
+  // way, because it is a gain on the piano.
+  useEffect(() => engine.setMix(1 - blend), [engine, blend]);
+  useEffect(() => engine.setSpeed(speed), [engine, speed]);
+
+  // The roll fades out as the crossfade moves toward the recording, so what you
+  // are hearing and what you are looking at agree. One write on the layer
+  // rather than one per note.
+  useEffect(() => {
+    if (layerRef.current) layerRef.current.style.opacity = `${1 - 0.55 * blend}`;
+  }, [blend]);
 
   /* ── the animation loop ───────────────────────────────────────────────── */
 
   // Everything in here is written straight to the DOM. React re-renders on
-  // state changes only; the playhead, the clock and the lit keys move 60 times
-  // a second and would otherwise re-render several hundred note elements each
-  // time just to shift a transform.
+  // state changes only; the roll, the clock and the lit keys move 60 times a
+  // second and would otherwise rebuild several hundred elements a frame.
   useEffect(() => {
+    const measure = () => {
+      rollHeight.current = rollRef.current?.clientHeight ?? 0;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (rollRef.current) observer.observe(rollRef.current);
+
     let raf = 0;
-    const lit = new Map<number, string>();
+    const lit = new Set<number>();
 
     const frame = () => {
       raf = requestAnimationFrame(frame);
       const at = engine.position;
 
-      if (scrollRef.current) {
-        scrollRef.current.style.transform = `translateY(${(at * PPS).toFixed(2)}px)`;
+      if (layerRef.current) {
+        const y = rollHeight.current + at * PIXELS_PER_SECOND;
+        layerRef.current.style.transform = `translate3d(0,${y.toFixed(2)}px,0)`;
       }
-      if (timeRef.current) {
-        timeRef.current.textContent = `${clock(at)} / ${clock(engine.duration)}`;
+      if (clockRef.current) {
+        clockRef.current.textContent = `${clock(at)} / ${clock(engine.duration)}`;
       }
-
-      // Which keys are down, and why. `n` is a transcribed note sounding, `c` a
-      // key the chord pad is holding; a key doing both carries both, and the
-      // keyboard shows the two differently — one fills, the other marks the
-      // front edge.
-      const now = new Map<number, string>();
-      if (chordsOn) {
-        const chord = chordAt(chords, at);
-        if (chord && chord.root !== null) {
-          for (const semis of chord.intervals) now.set(48 + chord.root + semis, "c");
-        }
-      }
-      for (const n of notes) {
-        if (n.time <= at && at < n.time + n.dur) {
-          now.set(n.midi, now.has(n.midi) ? "nc" : "n");
-        }
-      }
-      applyLit(lit, now);
-
-      if (railRef.current) {
-        railRef.current.textContent = `${engine.playing ? "▶" : "░"} ${at.toFixed(2)}s · ${now.size} voices`;
+      if (scrubRef.current) {
+        const done = engine.duration > 0 ? Math.min(1, at / engine.duration) : 0;
+        scrubRef.current.style.width = `${(done * 100).toFixed(2)}%`;
       }
       if (chordRef.current) {
         const chord = chordAt(chords, at);
-        chordRef.current.textContent = chord ? `▸ ${chord.label}` : "";
+        const label = chord?.label ?? "";
+        if (chordRef.current.textContent !== label) chordRef.current.textContent = label;
       }
+
+      // Which keys are down. Only the ones that changed are touched, so a
+      // steady chord costs nothing after the frame it lands on.
+      const now = new Map<number, string>();
+      for (const n of notes) {
+        if (n.time <= at && at < n.time + n.dur) now.set(n.midi, noteColor(n.hand, n.midi));
+      }
+      for (const midi of lit) {
+        if (!now.has(midi)) paintKey(keyEls.current.get(midi), midi, null);
+      }
+      for (const [midi, color] of now) {
+        if (!lit.has(midi)) paintKey(keyEls.current.get(midi), midi, color);
+      }
+      lit.clear();
+      for (const midi of now.keys()) lit.add(midi);
+
       // The transport can stop on its own when the clip runs out.
       if (engine.playing !== playing) setPlaying(engine.playing);
     };
@@ -111,9 +130,10 @@ export default function App() {
     raf = requestAnimationFrame(frame);
     return () => {
       cancelAnimationFrame(raf);
-      applyLit(lit, new Map());
+      observer.disconnect();
+      for (const midi of lit) paintKey(keyEls.current.get(midi), midi, null);
     };
-  }, [engine, notes, chords, chordsOn, playing]);
+  }, [engine, notes, chords, playing]);
 
   /* ── transport ────────────────────────────────────────────────────────── */
 
@@ -123,14 +143,9 @@ export default function App() {
     setPlaying(engine.playing);
   }, [engine]);
 
-  const rewind = useCallback(() => {
-    engine.seek(0);
-  }, [engine]);
-
-  const seek = useCallback(
-    (seconds: number) => {
-      engine.seek(seconds);
-    },
+  const seek = useCallback((seconds: number) => engine.seek(seconds), [engine]);
+  const seekFraction = useCallback(
+    (fraction: number) => engine.seek(Math.max(0, Math.min(1, fraction)) * engine.duration),
     [engine],
   );
 
@@ -140,330 +155,216 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
+      if (modalOpen) return;
       if (e.code === "Space") {
         e.preventDefault();
         toggle();
       } else if (e.key === "Home" || e.key === "0") {
-        rewind();
+        engine.seek(0);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggle, rewind]);
+  }, [toggle, engine, modalOpen]);
 
   /* ── transcription ────────────────────────────────────────────────────── */
 
   const start = useCallback(
-    async (file: File) => {
+    async (source: Source, crop: Crop) => {
       const run = ++runRef.current;
       const stale = () => runRef.current !== run;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       engine.pause();
-      // The click that picked the file is still the live gesture, so this is
-      // the moment the AudioContext can be resumed — waiting until the play
-      // button would work too, but this way the first note is never late.
+      // The click that started this is still the live gesture, so it is the
+      // moment the AudioContext can be resumed — waiting for the play button
+      // would work too, but this way the first note is never late.
       void engine.unlock();
 
-      setPhase("reading");
-      setProgress(0);
-      setStatus(`░ reading ${file.name.toLowerCase()}…`);
+      const span = cropSeconds(source, crop);
+      const file = cropToWav(source, crop);
+      const buffer = cropBuffer(source, crop);
+
+      setModalOpen(false);
+      setView("roll");
+      setPhase("working");
+      setStage("cutting the clip");
+      setError(null);
+      setNotes([]);
       setChords([]);
       setGrid(null);
+      setTiming(null);
+      setMidiUrl(null);
+      setMusicxmlUrl(null);
+      setFileName(`${source.name} · ${clock(span.start)}–${clock(span.end)}`);
+      setSpeed(1);
+      engine.setOriginal(buffer);
+      setDuration(buffer.duration);
 
-      // Wake the chord Space now: it is a free CPU Space that sleeps when idle
-      // and takes tens of seconds to come back, and the transcription is about
-      // to spend at least that long on the GPU anyway.
-      const warming = chordServiceEnabled
-        ? warmChordService().catch(() => false)
-        : Promise.resolve(false);
+      // Chords, in parallel with the notes and from a different machine. They
+      // are never worth failing a transcription over, so every error here
+      // resolves to null and the roll simply has no bands on it.
+      const chordRun = chordServiceEnabled
+        ? warmChordService(controller.signal)
+            .then((awake) => (awake ? analyzeChords(file, controller.signal) : null))
+            .catch(() => null)
+        : Promise.resolve(null);
 
-      let clip;
       try {
-        clip = await makeClip(file);
-      } catch (e) {
-        if (stale()) return;
-        setPhase("error");
-        setStatus(
-          e instanceof SilentAudioError
-            ? `░ ${e.message} — try another one`
-            : `░ could not decode that file — ${message(e)}`,
+        const result = await transcribe(
+          file,
+          mode,
+          {
+            onStage: (s) => !stale() && setStage(stageText(s)),
+            onProgress: (fraction) => {
+              if (stale() || fraction === null) return;
+              setStage((current) => `${current.split(" · ")[0]} · ${Math.round(fraction * 100)}%`);
+            },
+            // Notes decoded so far, drawn while the model is still working.
+            onNotes: (partial) => !stale() && setNotes(partial),
+          },
+          controller.signal,
         );
-        return;
-      }
-      if (stale()) return;
-
-      const title = file.name.replace(/\.[^.]+$/, "").toLowerCase();
-      setLoaded({ title, offset: clip.offset, source: "muscriptor" });
-      // Swap in the recording and clear the resident arrangement, so the roll
-      // is visibly waiting for this file rather than still showing the Bach.
-      engine.setOriginal(clip.buffer);
-      setNotes([]);
-      setDuration(clip.duration);
-      setPhase("queued");
-      setStatus("░ waiting for the gpu…");
-
-      // Chords, in parallel with the notes. They come back from a different
-      // machine and are never worth failing the transcription over, so this
-      // branch resolves to `null` on every error and the `/transcribe` chords
-      // are used instead.
-      const chordRun = warming
-        .then((awake) => (awake ? analyzeChords(clip.file) : null))
-        .catch(() => null);
-
-      let pending: Note[] | null = null;
-      const flush = window.setInterval(() => {
-        if (!pending || stale()) return;
-        setNotes(pending);
-        pending = null;
-      }, 140);
-
-      try {
-        const result = await transcribe(clip.file, {
-          onQueued: (position) => {
-            if (stale()) return;
-            setPhase("queued");
-            setStatus(
-              position > 0
-                ? `░ queued · ${position} ahead of you`
-                : "░ queued · next up",
-            );
-          },
-          onStarted: () => {
-            if (stale()) return;
-            setPhase("working");
-            setStatus(`░ transcribing ${clock(clip.offset)}–${clock(clip.offset + clip.duration)}…`);
-          },
-          onProgress: (completed, total) => {
-            if (!stale() && total > 0) setProgress(completed / total);
-          },
-          // Notes are drawn as they stream, but batched: an `end` event lands
-          // every few milliseconds and each one would otherwise rebuild every
-          // note element in the roll.
-          onNotes: (streamed) => {
-            pending = streamed;
-          },
-        });
         if (stale()) return;
 
         setNotes(result.notes);
         setGrid(result.grid);
-        setDuration(Math.max(result.duration, clip.duration));
-
-        const fromService = await chordRun;
-        if (stale()) return;
-        // Prefer the standalone service when it answered: it is the same model
-        // the GPU box runs, but it also ran beat tracking of its own, so its
-        // boundaries are the ones snapped to a grid it actually measured.
-        const finalChords = fromService?.length ? fromService : result.chords;
-        setChords(finalChords);
-        setLoaded({
-          title,
-          offset: clip.offset,
-          source: fromService?.length ? "muscriptor + btc" : "muscriptor",
-        });
+        setTiming(result.timing);
+        setMidiUrl(result.midiUrl);
+        setMusicxmlUrl(result.musicxmlUrl);
+        setDuration(Math.max(result.duration, buffer.duration));
 
         if (!result.notes.length) {
           setPhase("error");
-          setStatus("░ nothing pitched in that clip — try a different file");
+          setError("nothing pitched came back from that clip — try a different one");
           return;
         }
+
         setPhase("ready");
-        setStatus(null);
-        engine.seek(0);
+        // Start it — unless the roll was already playing, which it can be:
+        // the notes stream in and nothing stopped anyone pressing play at 40%.
+        // Seeking back to the start there would yank the piece out from under
+        // whoever is listening to it.
+        if (!engine.playing) {
+          engine.seek(0);
+          engine.play();
+          setPlaying(true);
+        }
+
+        // The chords land whenever they land: the transcription is already
+        // playing, and the bands and the pedal lifts appear under it.
+        const recognized = await chordRun;
+        if (!stale() && recognized?.length) setChords(recognized);
       } catch (e) {
         if (stale()) return;
+        if (e instanceof DOMException && e.name === "AbortError") {
+          setPhase("idle");
+          setModalOpen(true);
+          return;
+        }
         setPhase("error");
-        setStatus(`░ ${transcribeMessage(e)}`);
-      } finally {
-        clearInterval(flush);
+        setError(
+          e instanceof MireloError
+            ? e.message
+            : `could not reach the transcriber — ${e instanceof Error ? e.message : "unknown error"}`,
+        );
       }
     },
-    [engine],
+    [engine, mode],
   );
 
-  const onFile = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      // Reset the input so picking the same file twice fires again.
-      e.target.value = "";
-      if (file) void start(file);
-    },
-    [start],
-  );
+  const cancel = useCallback(() => {
+    runRef.current++;
+    abortRef.current?.abort();
+    setPhase("idle");
+    setModalOpen(true);
+  }, []);
 
-  // Drag and drop, on the whole window — the file input is a small target and
-  // dropping onto the roll is the obvious gesture.
-  useEffect(() => {
-    let depth = 0;
-    const hasFile = (e: DragEvent) =>
-      Array.from(e.dataTransfer?.types ?? []).includes("Files");
-    const onEnter = (e: DragEvent) => {
-      if (!hasFile(e)) return;
-      depth++;
-      setDragging(true);
-    };
-    const onLeave = () => {
-      // dragleave fires when crossing into a child, so count rather than clear.
-      depth = Math.max(0, depth - 1);
-      if (depth === 0) setDragging(false);
-    };
-    const onOver = (e: DragEvent) => {
-      if (hasFile(e)) e.preventDefault();
-    };
-    const onDrop = (e: DragEvent) => {
-      depth = 0;
-      setDragging(false);
-      const file = e.dataTransfer?.files?.[0];
-      if (!file) return;
-      e.preventDefault();
-      void start(file);
-    };
-    window.addEventListener("dragenter", onEnter);
-    window.addEventListener("dragleave", onLeave);
-    window.addEventListener("dragover", onOver);
-    window.addEventListener("drop", onDrop);
-    return () => {
-      window.removeEventListener("dragenter", onEnter);
-      window.removeEventListener("dragleave", onLeave);
-      window.removeEventListener("dragover", onOver);
-      window.removeEventListener("drop", onDrop);
-    };
-  }, [start]);
+  /* ── render ───────────────────────────────────────────────────────────── */
 
-  /* ── readouts ─────────────────────────────────────────────────────────── */
+  const registerKey = useCallback((midi: number, el: HTMLDivElement | null) => {
+    if (el) keyEls.current.set(midi, el);
+    else keyEls.current.delete(midi);
+  }, []);
 
-  const title = loaded?.title ?? "prelude in c · bwv 846";
-  const meta = loaded
-    ? `— ${loaded.source} · ${notes.length} notes · ${chords.length} chords · ${clock(loaded.offset)}–${clock(loaded.offset + duration)}`
-    : "j. s. bach — resident arrangement";
-
-  const bpm = grid?.bpm;
-  const stats = `notes ${notes.length} │ ${bpm ? `${Math.round(bpm)}bpm` : "no tempo"} │ ${PPS}px/s`;
-  const overlay = busy || phase === "error" ? status : null;
+  const sheetCaption = useMemo(() => {
+    const bits = [`MusicXML · ${notes.length} notes`];
+    if (grid?.detected) bits.push(`${Math.round(grid.bpm)} bpm · ${grid.beatsPerBar}/4`);
+    if (timing) {
+      bits.push(
+        timing.applied === timing.requested
+          ? timing.applied
+          : `${timing.requested} → ${timing.applied}${timing.fallbackReason ? ` (${timing.fallbackReason})` : ""}`,
+      );
+    }
+    return bits.join(" · ");
+  }, [notes.length, grid, timing]);
 
   return (
     <div className="app">
-      <div className="strip">
-        <span className="strip-kicker">new</span>
-        <span>
-          the {CLIP_SECONDS} most musical seconds go to a gpu — notes and chords come back
-        </span>
-        <span className="strip-spacer" />
-        <span>muscriptor medium · btc-large-voca</span>
-      </div>
+      <TopBar
+        mode={mode}
+        onMode={setMode}
+        view={view}
+        onView={setView}
+        fileName={fileName}
+        onReplace={() => setModalOpen(true)}
+        midiUrl={midiUrl}
+        musicxmlUrl={musicxmlUrl}
+      />
 
-      <header className="head">
-        <h1>pianoify</h1>
-        <select
-          className="picker"
-          value={pedal}
-          onChange={(e) => setPedal(e.target.value as Pedal)}
-          title="Damper pedal. Down, notes ring past their release until the harmony changes; up, they stop when the key does."
-        >
-          <option value="on">pedal · down</option>
-          <option value="off">pedal · up</option>
-        </select>
-        <div className="head-title">
-          <span className="name">{title}</span>
-          <span className="meta">{meta}</span>
-        </div>
-        <label className={`btn btn-primary file-btn${busy ? " disabled" : ""}`}>
-          {busy ? "working…" : "open audio"}
-          <input type="file" accept="audio/*" onChange={onFile} disabled={busy} />
-        </label>
-      </header>
-
-      <div className="stage">
-        <div className="stage-dither" />
-        <div className="frame">
-          <div className="rail">
-            <span>═ roll</span>
-            <span>
-              · c2–c7 · 61 keys · {notes.length} notes
-              {chords.length ? ` · ${chords.length} chords` : ""}
+      <Roll
+        notes={notes}
+        chords={chords}
+        pps={PIXELS_PER_SECOND}
+        containerRef={rollRef}
+        layerRef={layerRef}
+        onSeekChord={seek}
+        empty={
+          <div className="roll-empty">
+            <span className={`headline${phase === "error" ? " roll-error" : ""}`}>
+              {error ?? "Nothing transcribed yet"}
             </span>
-            <span className="rail-chord" ref={chordRef} />
-            <span className="rail-spacer" />
-            <span ref={railRef}>idle</span>
+            <span className="sub">
+              {phase === "error" ? "TRY ANOTHER FILE" : "DROP A RECORDING TO START"}
+            </span>
           </div>
+        }
+      >
+        {view === "sheet" && musicxmlUrl && (
+          <Sheet musicxmlUrl={musicxmlUrl} caption={sheetCaption} />
+        )}
+        {busy && <Working stage={stage} onCancel={cancel} />}
+      </Roll>
 
-          <Roll
-            notes={notes}
-            chords={chords}
-            grid={grid}
-            duration={duration}
-            pps={PPS}
-            showGrid
-            chordsOn={chordsOn}
-            scrollRef={scrollRef}
-            onSeek={seek}
-          />
+      <Keyboard register={registerKey} onStrike={(midi) => engine.strike(midi)} />
 
-          {overlay !== null && (
-            <div className="overlay">
-              <div className="overlay-card">
-                {overlay}
-                {phase === "working" && (
-                  <div className="overlay-bar">
-                    <span style={{ width: `${Math.round(progress * 100)}%` }} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+      <Transport
+        playing={playing}
+        onToggle={toggle}
+        onRestart={() => seek(0)}
+        onSeekFraction={seekFraction}
+        blend={blend}
+        onBlend={setBlend}
+        speed={speed}
+        onSpeed={setSpeed}
+        scrubRef={scrubRef}
+        clockRef={clockRef}
+        chordRef={chordRef}
+        enabled={notes.length > 0}
+      />
 
-          <Keyboard onPress={(midi) => engine.strike(midi)} />
-        </div>
-      </div>
+      {modalOpen && (
+        <UploadModal
+          onClose={() => setModalOpen(false)}
+          onStart={(source, crop) => void start(source, crop)}
+          canClose={notes.length > 0}
+          modeLabel={modeLabel(mode)}
+        />
+      )}
 
-      <footer className="foot">
-        <button className="btn btn-primary transport" onClick={toggle}>
-          {playing ? "pause" : "play"}
-        </button>
-        <button className="btn btn-ghost link-btn" onClick={rewind}>
-          rewind
-        </button>
-        <button
-          className={`btn btn-secondary link-btn${chordsOn ? " chip-on" : ""}`}
-          onClick={() => setChordsOn((on) => !on)}
-          disabled={!chords.length}
-          title={
-            chords.length
-              ? "Sound the recognized harmony under the transcription"
-              : "No chord track yet — transcribe something first"
-          }
-        >
-          {chords.length ? `chords · ${chordsOn ? "on" : "off"}` : "chords · —"}
-        </button>
-        <span className="mono" ref={timeRef}>
-          0:00
-        </span>
-        <span className="foot-spacer" />
-        <div className="mix">
-          <span>original</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={Math.round(mix * 100)}
-            onChange={(e) => setMix(Number(e.target.value) / 100)}
-            disabled={!loaded}
-          />
-          <span>piano</span>
-          <span className="mix-value">
-            {loaded
-              ? `${Math.round((1 - mix) * 100)}/${Math.round(mix * 100)}`
-              : "piano only"}
-          </span>
-        </div>
-        <span className="foot-divider" />
-        <span className="mono" style={{ color: "var(--muted)", fontSize: 11 }}>
-          {stats}
-        </span>
-      </footer>
-
-      {dragging && <div className="drop">drop an audio file anywhere</div>}
     </div>
   );
 }
@@ -479,53 +380,25 @@ function useEngine(): Engine {
   return engine;
 }
 
-/** The chord sounding at `at` — the last change at or before it. */
-function chordAt(chords: Chord[], at: number): Chord | null {
-  let found: Chord | null = null;
-  for (const c of chords) {
-    if (c.time > at) break;
-    found = c;
+function stageText(stage: Stage): string {
+  switch (stage) {
+    case "uploading":
+      return "uploading the clip";
+    case "queued":
+      return "queued at mirelo";
+    case "transcribing":
+      return "transcribing";
+    case "engraving":
+      return "engraving";
   }
-  return found;
 }
 
-/** Light the keys named in `next`, touching only the ones whose state actually
- *  changed since `previous` — which is then updated in place. Keeping the
- *  record means clearing the keyboard never has to walk all 61 keys. */
-function applyLit(previous: Map<number, string>, next: Map<number, string>) {
-  const write = (midi: number, code: string | undefined) => {
-    const el = document.querySelector(`[data-midi="${midi}"]`);
-    if (!el) return;
-    if (!code) {
-      el.removeAttribute("data-lit");
-      el.removeAttribute("data-chord");
-      return;
-    }
-    el.setAttribute("data-lit", code.includes("n") ? "1" : "2");
-    if (code.includes("c")) el.setAttribute("data-chord", "1");
-    else el.removeAttribute("data-chord");
-  };
-  for (const midi of previous.keys()) if (!next.has(midi)) write(midi, undefined);
-  for (const [midi, code] of next) if (previous.get(midi) !== code) write(midi, code);
-  previous.clear();
-  for (const [midi, code] of next) previous.set(midi, code);
-}
-
-function message(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : "unknown error";
-}
-
-/** The most useful thing we can say about a failed transcription. The server's
- *  own `detail` beats anything invented here; a CORS refusal or a dead tunnel
- *  arrives as an opaque `TypeError` from fetch and needs the explanation. */
-function transcribeMessage(e: unknown): string {
-  if (e instanceof TranscribeError) {
-    return e.userMessage ?? `the transcriber refused that (http ${e.status ?? "?"})`;
-  }
-  if (e instanceof TypeError) {
-    return "could not reach the transcriber — it may be asleep, or this origin is not in its cors allowlist";
-  }
-  return message(e);
+/** Light or clear one key. The unlit colour is the key's own, which is the
+ *  only reason this does not need to know anything else about the keyboard. */
+function paintKey(el: HTMLDivElement | undefined, midi: number, color: string | null) {
+  if (!el) return;
+  el.style.background = color ?? (isBlack(midi) ? "#0a0a0a" : "#ffffff");
+  el.style.boxShadow = color ? `0 0 14px ${color}` : "none";
 }
 
 /* ── the resident arrangement ────────────────────────────────────────────── */
@@ -536,7 +409,9 @@ const RESIDENT_DURATION = 8 * 4 * RESIDENT_BEAT;
 /**
  * Bach's C major prelude, so the page has something to play before it has
  * anything to transcribe. Eight bars of the broken-chord figure, each bar
- * played twice, which is exactly how the piece is written.
+ * played twice, which is exactly how the piece is written — and it goes
+ * through the same hand and fingering pass a real transcription does, so what
+ * is behind the upload panel on load is the app working, not a mockup of it.
  */
 function residentArrangement(): Note[] {
   const beat = RESIDENT_BEAT;
@@ -556,13 +431,22 @@ function residentArrangement(): Note[] {
     for (let half = 0; half < 2; half++) {
       const s = i * 4 * beat + half * 2 * beat;
       // The two held notes underneath, then the six-note figure over them.
-      out.push({ midi: bar[0], time: s, dur: beat * 0.92, vel: 0.9 });
-      out.push({ midi: bar[1], time: s + six, dur: beat * 0.92, vel: 0.85 });
+      out.push({ midi: bar[0], time: s, dur: beat * 0.92, vel: 0.9, hand: "L", finger: 5 });
+      out.push({ midi: bar[1], time: s + six, dur: beat * 0.92, vel: 0.85, hand: "L", finger: 2 });
       [2, 3, 4, 2, 3, 4].forEach((idx, k) => {
-        out.push({ midi: bar[idx], time: s + (k + 2) * six, dur: six * 0.95, vel: 0.72 });
+        out.push({
+          midi: bar[idx],
+          time: s + (k + 2) * six,
+          dur: six * 0.95,
+          vel: 0.72,
+          hand: "R",
+          finger: 1,
+        });
       });
     }
   });
   out.sort((a, b) => a.time - b.time);
+  assignHands(out);
+  assignFingers(out);
   return out;
 }
