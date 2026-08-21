@@ -174,11 +174,16 @@ export default function App() {
 
   /* ── transport ────────────────────────────────────────────────────────── */
 
+  // Play always starts the clip over rather than resuming where it stopped.
+  // Ten seconds is short enough that "carry on from the middle" is rarely what
+  // anyone wants — you stop it to hear the thing again from the top — and the
+  // scrub bar is still there for landing somewhere else.
   const toggle = useCallback(() => {
     if (engine.playing) {
       engine.pause();
       setPlaying(false);
     } else {
+      engine.seek(0);
       void engine.play().then(() => setPlaying(engine.playing));
     }
   }, [engine]);
