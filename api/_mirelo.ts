@@ -53,7 +53,11 @@ export const INSTRUMENTS = ["acoustic_piano"] as const;
 export const MAX_CLIP_SECONDS = 10;
 
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly headers: Record<string, string> = {},
+  ) {
     super(message);
   }
 }
@@ -213,6 +217,59 @@ export function query(req: IncomingMessage): URLSearchParams {
   return new URL(req.url ?? "/", "http://localhost").searchParams;
 }
 
+/**
+ * Fixed-window counter, one bucket per (`name`, client IP), living in this
+ * process.
+ *
+ * Enough to stop a curl loop from one machine. Not a distributed flood:
+ * Vercel isolates do not share this Map, so N regions is N windows. The
+ * billed endpoints are what this is for — a visitor who inspects `/api/job`
+ * in the network tab still has to come through here, and here is no longer
+ * unlimited.
+ */
+const windows = new Map<string, { n: number; reset: number }>();
+
+function clientIp(req: IncomingMessage): string {
+  // Prefer the header Vercel writes itself — a client-supplied X-Real-Ip
+  // would otherwise be a new bucket on every request.
+  const vercel = header(req, "x-vercel-forwarded-for");
+  if (vercel) return vercel.split(",")[0].trim();
+  const forwarded = header(req, "x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0].trim();
+  return req.socket.remoteAddress || "unknown";
+}
+
+function header(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name];
+  if (Array.isArray(value)) return value[0];
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function sweep(now: number): void {
+  for (const [key, slot] of windows) {
+    if (now >= slot.reset) windows.delete(key);
+  }
+}
+
+/** Throw 429 if this IP has already used `max` of this named bucket in the window. */
+export function throttle(req: IncomingMessage, name: string, max: number, windowMs: number): void {
+  const now = Date.now();
+  const key = `${name}:${clientIp(req)}`;
+  let slot = windows.get(key);
+  if (!slot || now >= slot.reset) {
+    slot = { n: 0, reset: now + windowMs };
+    windows.set(key, slot);
+  }
+  slot.n++;
+  if (slot.n > max) {
+    const retry = Math.max(1, Math.ceil((slot.reset - now) / 1000));
+    throw new ApiError(429, "too many requests from this address — wait a moment and try again", {
+      "Retry-After": String(retry),
+    });
+  }
+  if (windows.size > 2048) sweep(now);
+}
+
 /** Wrap a handler so every thrown `ApiError` becomes its status and message,
  *  and everything else becomes a 500 that says so without leaking a stack. */
 export function route(
@@ -230,6 +287,9 @@ export function route(
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 500;
       const error = e instanceof Error ? e.message : "unknown server error";
+      if (e instanceof ApiError) {
+        for (const [k, v] of Object.entries(e.headers)) res.setHeader(k, v);
+      }
       json(res, status, { error });
     }
   };

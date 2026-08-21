@@ -69,6 +69,11 @@ export default function App() {
   // way, because it is a gain on the piano.
   useEffect(() => engine.setMix(1 - blend), [engine, blend]);
   useEffect(() => engine.setSpeed(speed), [engine, speed]);
+  useEffect(() => {
+    if (!modalOpen) return;
+    engine.pause();
+    setPlaying(false);
+  }, [engine, modalOpen]);
 
   // The box hands back its MIDI in the stream rather than behind a link, so
   // that export is an object URL made here. It is revoked when the next
@@ -124,9 +129,15 @@ export default function App() {
 
       // Which keys are down. Only the ones that changed are touched, so a
       // steady chord costs nothing after the frame it lands on.
+      const keyNotes = modalOpen ? MODAL_KEY_LOOP_NOTES : notes;
+      const keyTime = modalOpen
+        ? (performance.now() / 1000) % MODAL_KEY_LOOP_DURATION
+        : at;
       const now = new Map<number, string>();
-      for (const n of notes) {
-        if (n.time <= at && at < n.time + n.dur) now.set(n.midi, noteColor(n.hand, n.midi));
+      for (const n of keyNotes) {
+        if (n.time <= keyTime && keyTime < n.time + n.dur) {
+          now.set(n.midi, noteColor(n.hand, n.midi));
+        }
       }
       for (const midi of lit) {
         if (!now.has(midi)) paintKey(keyEls.current.get(midi), midi, null);
@@ -147,7 +158,7 @@ export default function App() {
       observer.disconnect();
       for (const midi of lit) paintKey(keyEls.current.get(midi), midi, null);
     };
-  }, [engine, notes, chords, playing]);
+  }, [engine, notes, chords, playing, modalOpen]);
 
   /* ── transport ────────────────────────────────────────────────────────── */
 
@@ -380,7 +391,6 @@ export default function App() {
 
       {modalOpen && (
         <UploadModal
-          onClose={() => setModalOpen(false)}
           onStart={(source, crop) => void start(source, crop)}
           canClose={notes.length > 0}
           model={modelById(model)}
@@ -435,6 +445,7 @@ function paintKey(el: HTMLDivElement | undefined, midi: number, color: string | 
 
 const RESIDENT_BEAT = 60 / 72;
 const RESIDENT_DURATION = 8 * 4 * RESIDENT_BEAT;
+const MODAL_KEY_LOOP_DURATION = 4 * RESIDENT_BEAT;
 
 /**
  * Bach's C major prelude, so the page has something to play before it has
@@ -480,3 +491,7 @@ function residentArrangement(): Note[] {
   assignFingers(out);
   return out;
 }
+
+const MODAL_KEY_LOOP_NOTES = residentArrangement().filter(
+  (note) => note.time < MODAL_KEY_LOOP_DURATION,
+);

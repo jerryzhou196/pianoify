@@ -28,12 +28,10 @@ import { clock } from "../roll";
  * the only thing there is to choose.
  */
 export function UploadModal({
-  onClose,
   onStart,
   canClose,
   model,
 }: {
-  onClose: () => void;
   onStart: (source: Source, crop: Crop) => void;
   canClose: boolean;
   model: Model;
@@ -260,20 +258,31 @@ export function UploadModal({
       : null;
 
   return (
-    <div
-      className="scrim"
-      onMouseDown={(e) => {
-        if (canClose && e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="scrim">
       <div className="modal">
         <div className="modal-head">
           <span className="title">New transcription</span>
-          {canClose && (
-            <button className="close" onClick={onClose} title="close">
-              ✕
-            </button>
-          )}
+        </div>
+
+        <div className="url">
+          <span className="tag">YT</span>
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void fromUrl();
+            }}
+            placeholder="Paste a YouTube link, or a direct link to an audio file"
+          />
+          <button onClick={() => void fromUrl()} disabled={!url.trim() || reading !== null}>
+            Fetch
+          </button>
+        </div>
+
+        <div className="or">
+          <div className="rule" />
+          <span>OR</span>
+          <div className="rule" />
         </div>
 
         <label
@@ -308,27 +317,6 @@ export function UploadModal({
             }}
           />
         </label>
-
-        <div className="or">
-          <div className="rule" />
-          <span>OR</span>
-          <div className="rule" />
-        </div>
-
-        <div className="url">
-          <span className="tag">YT</span>
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void fromUrl();
-            }}
-            placeholder="Paste a YouTube link, or a direct link to an audio file"
-          />
-          <button onClick={() => void fromUrl()} disabled={!url.trim() || reading !== null}>
-            Fetch
-          </button>
-        </div>
 
         {error && <div className="modal-error">{error}</div>}
 
