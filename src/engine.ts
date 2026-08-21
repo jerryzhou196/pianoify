@@ -10,6 +10,11 @@ import type { Note } from "./types";
  * public-domain Splendid Grand Piano recordings, loaded by `smplr` while the
  * upload panel is open. A short release leaves a little natural sustain after
  * each key comes up without washing one chord into the next.
+ *
+ * The transport repeats. A clip is a handful of seconds and hearing it once is
+ * rarely enough, so the end of a pass runs into the top of the next one rather
+ * than into silence; the seam is scheduled before it arrives, and the last
+ * chord's release rings over the first notes coming back round.
  */
 
 /** How far ahead of the clock notes are handed to WebAudio. Long enough that a
@@ -49,11 +54,20 @@ export class Engine {
   private notes: Note[] = [];
   private noteCursor = 0;
   private buffer: AudioBuffer | null = null;
-  private source: AudioBufferSourceNode | null = null;
+  /** Every pass of the recording handed to WebAudio and not yet finished —
+   *  two of them across a seam, because the next pass is scheduled while the
+   *  current one is still sounding. */
+  private sources: AudioBufferSourceNode[] = [];
 
   private pumpTimer: number | null = null;
-  /** Context time that corresponds to position 0 of the piece. */
+  /** Context time that corresponds to position 0 of the first pass. Passes are
+   *  exactly one `duration` apart, so this is not rewritten every time round —
+   *  `lapOrigin` counts forward from it instead. */
   private origin = 0;
+  /** Context time of position 0 for the pass the note cursor is walking. That
+   *  is the pass now sounding, until the seam falls inside the scheduling
+   *  horizon and the cursor moves on to the next one. */
+  private scheduleOrigin = 0;
   private pausedAt = 0;
   private live: Voice[] = [];
   private voiceId = 0;
@@ -176,12 +190,22 @@ export class Engine {
 
   get position(): number {
     if (!this.playing || !this.ctx) return this.pausedAt;
-    return Math.max(0, (this.ctx.currentTime - this.origin) * this.rate);
+    return Math.max(0, (this.ctx.currentTime - this.lapOrigin()) * this.rate);
   }
 
-  /** Context time a piece-time position falls at. */
+  /** Context time the pass now sounding began at. Derived rather than stored,
+   *  so the position the roll and the clock read wraps on the frame the seam
+   *  is crossed instead of on the next fifty-millisecond pump. */
+  private lapOrigin(): number {
+    if (!this.ctx || this.duration <= 0) return this.origin;
+    const lap = this.duration / this.rate;
+    const passes = Math.floor((this.ctx.currentTime - this.origin) / lap);
+    return passes > 0 ? this.origin + passes * lap : this.origin;
+  }
+
+  /** Context time a piece-time position falls at, in the pass now sounding. */
   private clockTime(position: number): number {
-    return this.origin + position / this.rate;
+    return this.lapOrigin() + position / this.rate;
   }
 
   /** Change playback speed while keeping the current position. */
@@ -266,34 +290,39 @@ export class Engine {
     this.pumpTimer = null;
   }
 
-  /** Stop every sampled voice and the original recording on pause or seek. */
+  /** Stop every sampled voice and the original recording on pause or seek.
+   *  Both passes go across a seam, including one that has been scheduled but
+   *  has not begun. */
   private silence() {
     const now = this.ctx?.currentTime ?? 0;
     for (const voice of this.live) voice.stop(now);
     this.live = [];
-    if (this.source) {
+    for (const src of this.sources.splice(0)) {
       try {
-        this.source.stop();
+        src.stop();
       } catch {
         // Already stopped at the end of its buffer.
       }
-      this.source = null;
     }
   }
 
-  /** Move the note cursor to the current position. */
+  /** Move the note cursor to the current position, in the pass now sounding. */
   private reseek() {
     const at = this.position;
+    this.scheduleOrigin = this.lapOrigin();
     this.noteCursor = 0;
     while (this.noteCursor < this.notes.length && this.notes[this.noteCursor].time < at) {
       this.noteCursor++;
     }
   }
 
-  private startOriginal() {
+  /** Play the recording from `offset` seconds into the piece, starting at
+   *  `when` in context time. The defaults are where the transport is now; the
+   *  seam passes the top of the next pass and the moment it begins, which is
+   *  still a fraction of a second away. */
+  private startOriginal(offset = this.position, when = this.clockTime(offset)) {
     if (!this.buffer) return;
     const ctx = this.audio();
-    const offset = this.position;
     if (offset >= this.buffer.duration) return;
     const src = ctx.createBufferSource();
     src.buffer = this.buffer;
@@ -301,37 +330,50 @@ export class Engine {
     // Resampling, not time-stretching: slower recording playback drops pitch;
     // the separately triggered piano samples retain their written pitches.
     src.playbackRate.value = this.rate;
-    src.start(this.clockTime(offset), offset);
-    this.source = src;
+    src.onended = () => {
+      this.sources = this.sources.filter((other) => other !== src);
+    };
+    src.start(when, offset);
+    this.sources.push(src);
   }
 
-  /** Hand WebAudio every note beginning inside the scheduling horizon. */
+  /** Hand WebAudio every note beginning inside the scheduling horizon. The
+   *  horizon can reach past the end of a pass, in which case the cursor rolls
+   *  round to the top of the next one and keeps going: the notes either side
+   *  of a seam are scheduled in the same breath, so nothing about it has to
+   *  happen on time later. */
   private pump() {
     if (!this.playing || !this.ctx) return;
     const ctx = this.ctx;
     const until = ctx.currentTime + HORIZON;
+    const lap = this.duration > 0 ? this.duration / this.rate : 0;
 
-    while (this.noteCursor < this.notes.length) {
-      const note = this.notes[this.noteCursor];
-      const at = this.clockTime(note.time);
-      if (at >= until) break;
-      this.noteCursor++;
-      this.spawn(
-        note.midi,
-        Math.max(ctx.currentTime, at),
-        note.dur / this.rate,
-        note.vel,
-      );
+    // One turn per pass. Anything longer than a third of a second crosses at
+    // most one seam per pump; the bound is only there so a degenerate clip
+    // cannot schedule passes forever.
+    for (let crossed = 0; crossed < 4; crossed++) {
+      while (this.noteCursor < this.notes.length) {
+        const note = this.notes[this.noteCursor];
+        const at = this.scheduleOrigin + note.time / this.rate;
+        if (at >= until) break;
+        this.noteCursor++;
+        this.spawn(
+          note.midi,
+          Math.max(ctx.currentTime, at),
+          note.dur / this.rate,
+          note.vel,
+        );
+      }
+
+      const next = this.scheduleOrigin + lap;
+      if (lap <= 0 || next >= until) break;
+      this.scheduleOrigin = next;
+      this.noteCursor = 0;
+      this.startOriginal(0, next);
     }
 
     const now = ctx.currentTime;
     this.live = this.live.filter((voice) => voice.until > now);
-
-    // Leave enough room for the final sample release before resetting.
-    if (this.position > this.duration + RELEASE_SECONDS + 0.4) {
-      this.pause();
-      this.pausedAt = 0;
-    }
   }
 
   /** Trigger the nearest real recording and let its release envelope provide
