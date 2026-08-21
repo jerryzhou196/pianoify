@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { MODELS, modelById, type ModelId } from "../models";
+import { useState } from "react";
+import { ModelPicker } from "./ModelPicker";
+import { modelById, type ModelId } from "../models";
 
 /**
  * The header: which model transcribes, which way of looking at the result is
@@ -30,27 +31,7 @@ export function TopBar({
   midiUrl: string | null;
   musicxmlUrl: string | null;
 }) {
-  const [open, setOpen] = useState(false);
-  const picker = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState<string | null>(null);
-
-  // Close the menu on anything that is not the menu — a click elsewhere or
-  // Escape. Without this it survives a click on the roll behind it.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!picker.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   const current = modelById(model);
   /** Why the two MusicXML-shaped controls are dead, when they are. The box
@@ -93,40 +74,7 @@ export function TopBar({
 
   return (
     <header className="bar">
-      <div className="picker" ref={picker}>
-        <button
-          className="chip"
-          onClick={() => setOpen((v) => !v)}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-        >
-          <span className="dot" />
-          <span>{current.name}</span>
-          <span className="caret">▾</span>
-        </button>
-        {open && (
-          <div className="picker-menu" role="listbox">
-            {MODELS.map((m) => (
-              <button
-                key={m.id}
-                className="picker-option"
-                role="option"
-                aria-selected={m.id === model}
-                onClick={() => {
-                  onModel(m.id);
-                  setOpen(false);
-                }}
-              >
-                <span className="head">
-                  <span className="name">{m.name}</span>
-                  <span className="tag">{m.tag}</span>
-                </span>
-                <span className="note">{m.note}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <ModelPicker model={model} onModel={onModel} />
 
       <div className="tabs" role="tablist">
         <button

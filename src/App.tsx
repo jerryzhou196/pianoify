@@ -392,7 +392,8 @@ export default function App() {
       {modalOpen && (
         <UploadModal
           onStart={(source, crop) => void start(source, crop)}
-          model={modelById(model)}
+          model={model}
+          onModel={setModel}
         />
       )}
 
