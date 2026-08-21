@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ModelPicker } from "./ModelPicker";
-import { modelById, type ModelId } from "../models";
+import type { ModelId } from "../models";
 
 /**
  * The header: which model transcribes, which way of looking at the result is
@@ -9,8 +9,10 @@ import { modelById, type ModelId } from "../models";
  * The exports hand over the transcriber's own renderings rather than anything
  * built here, so what lands in a notation editor is what was actually decoded
  * and not this app's re-derivation of it. Mirelo returns both MIDI and
- * MusicXML behind presigned links; the GPU box writes MIDI only, and leaves
- * the MusicXML export and the sheet-music tab disabled.
+ * MusicXML behind presigned links; the GPU box hands its MIDI over with the
+ * notes and its MusicXML a few seconds later, once MuseScore has engraved it.
+ * Which is why the sheet-music tab opens on a waiting line rather than staying
+ * shut: the wait is the honest state, and it is a short one.
  */
 export function TopBar({
   model,
@@ -21,6 +23,7 @@ export function TopBar({
   onReplace,
   midiUrl,
   musicxmlUrl,
+  engraving,
 }: {
   model: ModelId;
   onModel: (model: ModelId) => void;
@@ -30,17 +33,26 @@ export function TopBar({
   onReplace: () => void;
   midiUrl: string | null;
   musicxmlUrl: string | null;
+  /** Where the MusicXML is, when it is written after the notes rather than
+   *  with them. See `engraving` in `App.tsx`. */
+  engraving: "idle" | "running" | "failed";
 }) {
   const [saving, setSaving] = useState<string | null>(null);
 
-  const current = modelById(model);
-  /** Why the two MusicXML-shaped controls are dead, when they are. The box
-   *  writes MIDI and nothing else, so "transcribe something first" would be
-   *  advice that does not work. */
+  /** Why a MusicXML-shaped control is dead, when it is. The box engraves in a
+   *  second pass after the notes, so for a few seconds the answer is "not yet"
+   *  rather than "not at all", and sometimes it is "it could not". */
   const noXml =
-    current.backend === "muscriptor"
-      ? "the gpu box writes MIDI only — transcribe with Mirelo to engrave"
-      : "transcribe something first";
+    engraving === "running"
+      ? "engraving — a few seconds"
+      : engraving === "failed"
+        ? "the box could not engrave this one"
+        : "transcribe something first";
+
+  /** The tab opens on anything the sheet-music panel can say for itself —
+   *  a page, a wait, or the reason there will not be one. It is shut only when
+   *  there is nothing to tell. */
+  const sheetOpens = musicxmlUrl !== null || engraving !== "idle";
 
   /** Save one of the transcription's own files under a name that means
    *  something.
@@ -90,8 +102,8 @@ export function TopBar({
           role="tab"
           aria-selected={view === "sheet"}
           onClick={() => onView("sheet")}
-          disabled={!musicxmlUrl}
-          title={musicxmlUrl ? undefined : noXml}
+          disabled={!sheetOpens}
+          title={sheetOpens ? undefined : noXml}
         >
           Sheet music
         </button>

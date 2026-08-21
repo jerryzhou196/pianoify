@@ -5,13 +5,14 @@
  * between them:
  *
  *   **Mirelo** is a hosted API. It bills credits, it is reached through this
- *   site's own `/api/*` functions (see `src/mirelo.ts`), and it is the only
- *   one of the two that engraves — the sheet-music tab and the MusicXML export
- *   are its MusicXML.
+ *   site's own `/api/*` functions (see `src/mirelo.ts`), and it engraves as it
+ *   transcribes: the MusicXML behind the sheet-music tab comes back with the
+ *   notes.
  *
  *   **MuScriptor** is the rented GPU box. It costs nothing per clip because
  *   the instance is already paid for by the hour, it streams notes as it
- *   decodes them, and it hands back a MIDI file but no MusicXML.
+ *   decodes them, and it engraves on a second request — MuseScore, on the
+ *   box's CPU, a few seconds after the roll is already playing.
  *
  * The types below are shared rather than per-backend so that `App.tsx` can
  * hold one set of handlers and hand it to whichever of the two the picker
@@ -87,7 +88,7 @@ export const MODELS: Model[] = [
     service: "the gpu box",
     name: "MuScriptor · GPU box",
     tag: "self-hosted",
-    note: "Runs on the rented GPU rather than a hosted API: no credits, and the notes appear on the roll as the box decodes them. Exports MIDI; sheet music needs Mirelo.",
+    note: "Runs on the rented GPU rather than a hosted API: no credits, and the notes appear on the roll as the box decodes them. The sheet music is engraved a few seconds behind them.",
     billed: false,
   },
   {
