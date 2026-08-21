@@ -57,7 +57,7 @@ export function UploadModal({
   const cropRef = useRef(crop);
   cropRef.current = crop;
 
-  /* ── loading ───────────────────────────────────────────────────────────── */
+  /* ── loading ──────────────────────────────────────────────────────────────── */
 
   const load = useCallback(async (file: File) => {
     setError(null);
@@ -166,7 +166,7 @@ export function UploadModal({
     }
   };
 
-  /* ── the preview ───────────────────────────────────────────────────────── */
+  /* ── the preview ────────────────────────────────────────────────────────── */
 
   // The playhead is written straight to the DOM, for the same reason the roll's
   // is: it moves every frame and nothing else in this panel does. The same loop
@@ -192,8 +192,7 @@ export function UploadModal({
     return () => cancelAnimationFrame(raf);
   }, [source]);
 
-  const togglePreview = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const togglePreview = () => {
     const el = audio.current;
     if (!el || !source) return;
     if (!el.paused) {
@@ -201,12 +200,12 @@ export function UploadModal({
       setPlaying(false);
       return;
     }
-    const from = crop.a * source.duration;
-    // Restart from the top of the window unless the preview was paused inside
-    // it, where carrying on is what you meant.
-    if (el.currentTime < from || el.currentTime >= crop.b * source.duration) {
-      el.currentTime = from;
-    }
+    // Always from the top of the window, never resuming where a pause left off.
+    // The button means "hear the clip I am about to send", and that only holds
+    // if every press plays the same thing: nudge the window a second later,
+    // press again, and what you hear is the comparison you asked for rather
+    // than whatever tail of the old position happened to be left over.
+    el.currentTime = crop.a * source.duration;
     void el
       .play()
       .then(() => setPlaying(true))
@@ -216,7 +215,7 @@ export function UploadModal({
       });
   };
 
-  /* ── the quote ─────────────────────────────────────────────────────────── */
+  /* ── the quote ────────────────────────────────────────────────────────── */
 
   const window_ = source ? cropSeconds(source, crop) : null;
   const seconds = window_ ? window_.end - window_.start : 0;
@@ -239,7 +238,7 @@ export function UploadModal({
     };
   }, [source, seconds]);
 
-  /* ── render ────────────────────────────────────────────────────────────── */
+  /* ── render ──────────────────────────────────────────────────────────── */
 
   const left = crop.a * 100;
   const right = crop.b * 100;
@@ -311,11 +310,21 @@ export function UploadModal({
           <>
             <div className="trim">
               <div className="trim-head">
-                <span className="caption">
-                  {slidable
-                    ? `DRAG THE ${MAX_CLIP_SECONDS}s WINDOW — PLAY TO HEAR IT`
-                    : `WHOLE FILE — UNDER ${MAX_CLIP_SECONDS}s`}
-                </span>
+                <div className="trim-head-left">
+                  <button
+                    className="preview"
+                    onClick={togglePreview}
+                    title={playing ? "stop the preview" : "preview these seconds"}
+                  >
+                    <span className="glyph">{playing ? "❚❚" : "▶"}</span>
+                    {playing ? "Stop" : "Play selection"}
+                  </button>
+                  <span className="caption">
+                    {slidable
+                      ? `DRAG THE ${MAX_CLIP_SECONDS}s WINDOW`
+                      : `WHOLE FILE — UNDER ${MAX_CLIP_SECONDS}s`}
+                  </span>
+                </div>
                 <span className="readout">
                   {clock(window_.start)} → {clock(window_.end)} ({seconds.toFixed(1)}s)
                 </span>
@@ -342,15 +351,6 @@ export function UploadModal({
                 <div className="wave-mask left" style={{ width: `${left}%` }} />
                 <div className="wave-mask right" style={{ width: `${100 - right}%` }} />
                 <div className="wave-head" ref={head} />
-                <button
-                  className="wave-play"
-                  style={{ left: `${(left + right) / 2}%` }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={togglePreview}
-                  title={playing ? "stop the preview" : "preview these seconds"}
-                >
-                  {playing ? "❚❚" : "▶"}
-                </button>
               </div>
             </div>
 
