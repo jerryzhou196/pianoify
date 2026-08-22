@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -36,6 +37,15 @@ function devApi(): Plugin {
     configureServer(server) {
       server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next) => {
         const path = (req.url ?? "").split("?")[0];
+        // `/about` is a second HTML entry, and in production the extensionless
+        // URL is a rewrite in `vercel.json`. Vite's static handling only knows
+        // the file's real name, so the same rewrite happens here — otherwise
+        // the one link out of the app is a 404 in dev and fine in production,
+        // which is the worst way round to find out.
+        if (path === "/about") {
+          req.url = "/about.html";
+          return next();
+        }
         const file = ROUTES[path];
         if (!file) return next();
         try {
@@ -91,6 +101,13 @@ export default defineConfig(({ mode }) => {
       outDir: "dist",
       emptyOutDir: true,
       rollupOptions: {
+        // Two documents, not one. `about.html` ships no JavaScript and imports
+        // nothing from `src/`, so it costs the app nothing — but it has to be
+        // named here or the build simply would not emit it.
+        input: {
+          main: fileURLToPath(new URL("./index.html", import.meta.url)),
+          about: fileURLToPath(new URL("./about.html", import.meta.url)),
+        },
         output: {
           // The engraver is a megabyte of vendor code that only the sheet-music
           // tab ever needs; splitting it keeps it out of the first paint.
