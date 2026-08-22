@@ -88,67 +88,119 @@
       rel="stylesheet"
     />
 
-    <!-- Styles for the paragraph below and nothing else, inline because it has
-         to be right before the bundle's stylesheet exists. Six rules; the
-         design lives in `src/styles.css` as it always did. -->
+    <!-- Styles for the meter below and nothing else, inline because it has to
+         be right before the bundle's stylesheet exists. The design lives in
+         `src/styles.css` as it always did. -->
     <style>
+      /* The bundle's stylesheet resets this, but it does not exist yet, and the
+         default 8px margin is enough to put a white frame and a scrollbar
+         around a full-height black page. */
+      html,
+      body {
+        margin: 0;
+        background: #000;
+      }
+      /* Both axes, on the viewport rather than on a column: the meter is the
+         only thing here, so there is nothing for it to be centred relative to
+         except the window. `100dvh` keeps it off the mobile URL bar, which
+         moves and would otherwise drag the centre with it. */
       .boot {
         min-height: 100vh;
+        min-height: 100dvh;
         display: flex;
-        flex-direction: column;
+        align-items: center;
         justify-content: center;
-        gap: 14px;
-        max-width: 34rem;
-        margin: 0 auto;
-        padding: 0 24px;
         background: #000;
-        color: #cfcfcf;
-        font-family: "DM Sans", Helvetica, Arial, sans-serif;
-        line-height: 1.5;
       }
-      .boot h1 {
-        margin: 0;
-        font-size: 3rem;
-        letter-spacing: -0.04em;
-        color: #fff;
+      /* The bar meter the app already runs while a transcription is in flight,
+         inlined here so the wait before the bundle mounts is drawn in the app's
+         own vocabulary rather than in a borrowed circle. Each bar starts a beat
+         after the one to its left, which reads as a wave travelling across the
+         row instead of ten things blinking together. */
+      .boot-meter {
+        display: flex;
+        align-items: flex-end;
+        gap: 5px;
+        height: 40px;
       }
-      .boot p {
-        margin: 0;
+      .boot-meter i {
+        width: 5px;
+        height: 100%;
+        background: #cfcfcf;
+        transform-origin: bottom;
+        animation: boot-bar 0.85s ease-in-out infinite alternate;
       }
-      .boot ul {
-        margin: 0;
-        padding-left: 1.1rem;
+      .boot-meter i:nth-child(2) {
+        animation-delay: 0.08s;
+      }
+      .boot-meter i:nth-child(3) {
+        animation-delay: 0.16s;
+      }
+      .boot-meter i:nth-child(4) {
+        animation-delay: 0.24s;
+      }
+      .boot-meter i:nth-child(5) {
+        animation-delay: 0.32s;
+      }
+      .boot-meter i:nth-child(6) {
+        animation-delay: 0.4s;
+      }
+      .boot-meter i:nth-child(7) {
+        animation-delay: 0.48s;
+      }
+      .boot-meter i:nth-child(8) {
+        animation-delay: 0.56s;
+      }
+      .boot-meter i:nth-child(9) {
+        animation-delay: 0.64s;
+      }
+      .boot-meter i:nth-child(10) {
+        animation-delay: 0.72s;
+      }
+      @keyframes boot-bar {
+        from {
+          transform: scaleY(0.18);
+          opacity: 0.4;
+        }
+        to {
+          transform: scaleY(1);
+          opacity: 1;
+        }
+      }
+      /* Frozen rather than hidden: a still row of bars is a legible object, so
+         the space the meter holds does not collapse when it stops moving. */
+      @media (prefers-reduced-motion: reduce) {
+        .boot-meter i {
+          animation: none;
+          transform: scaleY(0.55);
+        }
       }
     </style>
   </head>
   <body>
     <!-- React clears `#root` on its first render, so what is written inside it
-         is only ever seen by two audiences: a crawler that did not run the
-         bundle, and a visitor for the moment before it mounts.
+         is seen only for the moment before the bundle mounts. That moment now
+         holds a meter and nothing else.
 
-         Both are worth writing for. Googlebot does render JavaScript, but it
-         renders it on a second pass whenever it feels like it, and until then
-         this app is an empty div — which is a page with nothing on it to
-         index. The sentences below are the app's own; nothing here is written
-         for a crawler that a person would not also be shown. -->
+         The prose that used to sit here was also what a crawler saw on the
+         first pass, before Googlebot came back round to render the JavaScript.
+         That job now falls entirely to `<title>`, `<meta name="description">`,
+         and the JSON-LD block above — worth knowing if this page's search
+         result ever looks thin. -->
     <div id="root">
       <main class="boot">
-        <h1>pianoify</h1>
-        <p>Drop in a recording, hear it back as piano.</p>
-        <p>
-          Drop an audio file or paste a YouTube link. It is decoded in the tab, drawn as a waveform,
-          and cropped to ten seconds. That clip goes to a transcriber, which sends back the notes —
-          and the piano roll fills in while the model is still decoding, plays on a sampled Steinway
-          grand with a working damper pedal, engraves the transcription as sheet music, and
-          crossfades against the original recording.
-        </p>
-        <ul>
-          <li>Audio to MIDI, free, in the browser</li>
-          <li>Sheet music you can export as MusicXML</li>
-          <li>Chords recognised under the notes</li>
-          <li>Works on an MP3, a WAV, a voice memo, or a YouTube link</li>
-        </ul>
-        <p>Loading the app — it needs JavaScript and the Web Audio API.</p>
+        <div class="boot-meter" role="status" aria-label="Loading pianoify">
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+        </div>
       </main>
     </div>
     <script type="module" src="/src/main.tsx"></script>
