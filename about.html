@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!-- The app is one screen with almost no words in it, and the words it does
+         have arrive only after React mounts. This page is the other half of
+         that: a plain document, complete in the HTML that comes off the wire,
+         that says what pianoify does and how. It is written for a person who
+         wants to know before they upload something — a crawler reading it
+         without running any JavaScript is the same page, which is the point. -->
+    <title>How pianoify works — audio to piano MIDI in the browser</title>
+    <meta
+      name="description"
+      content="How pianoify turns a recording into piano: the file is decoded in your browser, cropped to ten seconds, transcribed to MIDI, then played on a sampled grand and engraved as sheet music."
+    />
+    <link rel="canonical" href="https://www.pianoify.net/about" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="theme-color" content="#000000" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="pianoify" />
+    <meta property="og:url" content="https://www.pianoify.net/about" />
+    <meta property="og:title" content="How pianoify works" />
+    <meta
+      property="og:description"
+      content="The file is decoded in your browser, cropped to ten seconds, transcribed to MIDI, then played on a sampled grand and engraved as sheet music."
+    />
+    <meta property="og:image" content="https://www.pianoify.net/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- The questions below are the ones actually asked of a tool like this,
+         and the answers are the ones on the page rather than a second, more
+         flattering set written for a search result. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is pianoify free?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Free to use, with no account and no card. One of the two transcribers spends credits, but on an account that is not yours; the one the picker opens on is a GPU box rented by the hour, which costs nothing per clip."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why only ten seconds?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Ten seconds is what one pass on the transcriber costs in time and GPU. You choose which ten seconds by sliding a window over the waveform, and the file itself can be up to ten minutes long."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does my audio get uploaded?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Only the ten seconds you selected. Decoding, the waveform and the crop all happen in the browser tab, so the rest of the file never leaves your machine."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I get sheet music out of it?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The transcription is engraved as sheet music in the tab and exports as MusicXML, which opens in MuseScore, Sibelius, Finale or Dorico. The MIDI exports too. Both files are the transcriber's own renderings rather than this app's re-derivation of them."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How accurate is it?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Solo piano comes back close to right. A dense mix is harder: the model hears the loudest line best, so vocals and lead instruments survive and inner parts get approximated."
+            }
+          }
+        ]
+      }
+    </script>
+
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B9%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Self-contained rather than importing `src/styles.css`: that stylesheet
+         is written for one non-scrolling screen of app chrome and shares none
+         of its rules with a column of prose. This page ships no JavaScript at
+         all, and the palette is copied from the app's custom properties so the
+         two still look like the same site. -->
+    <style>
+      :root {
+        --bg: #000000;
+        --panel: #0b0b0b;
+        --line: #191919;
+        --edge: #2a2a2a;
+        --ink: #ffffff;
+        --ink-soft: #cfcfcf;
+        --muted: #7d7d7d;
+        --left-hand: #3ddc97;
+        --right-hand: #78bcff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+      }
+      body {
+        color: var(--ink-soft);
+        font-family: "DM Sans", Helvetica, Arial, sans-serif;
+        font-size: 17px;
+        line-height: 1.62;
+        -webkit-font-smoothing: antialiased;
+      }
+      .page {
+        max-width: 40rem;
+        margin: 0 auto;
+        padding: 56px 24px 96px;
+        padding-bottom: calc(96px + env(safe-area-inset-bottom));
+      }
+      a {
+        color: var(--right-hand);
+        text-decoration-color: #34506e;
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        text-decoration-color: var(--right-hand);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 2.6rem;
+        line-height: 1.1;
+        letter-spacing: -0.04em;
+        color: var(--ink);
+      }
+      h2 {
+        margin: 44px 0 12px;
+        font-size: 1.28rem;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+      }
+      p {
+        margin: 0 0 16px;
+      }
+      ul {
+        margin: 0 0 16px;
+        padding-left: 1.15rem;
+      }
+      li {
+        margin-bottom: 6px;
+      }
+      /* The word that names a thing on screen, set in the same mono the app
+         sets its own labels in, so a reference to a control looks like the
+         control. */
+      code {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.88em;
+        color: var(--ink);
+      }
+      .lede {
+        font-size: 1.16rem;
+        color: var(--ink);
+        margin-bottom: 28px;
+      }
+      /* Back to the app, at the top where someone who arrived from a search
+         result is still deciding whether to bother, and again at the bottom
+         for the one who read the whole thing. */
+      .home {
+        display: inline-block;
+        margin-bottom: 36px;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .home:hover {
+        color: var(--ink-soft);
+      }
+      .cta {
+        display: inline-block;
+        margin: 8px 0 0;
+        padding: 11px 20px;
+        border: 1px solid var(--edge);
+        border-radius: 999px;
+        background: var(--ink);
+        color: #000;
+        font-weight: 500;
+        text-decoration: none;
+      }
+      .cta:hover {
+        background: var(--ink-soft);
+      }
+      /* The pipeline, numbered, because it is a sequence and reads as one. The
+         counter is drawn rather than left to the browser so the digits can sit
+         in the margin in the app's mono. */
+      ol.steps {
+        margin: 0 0 16px;
+        padding: 0;
+        list-style: none;
+        counter-reset: step;
+      }
+      ol.steps li {
+        counter-increment: step;
+        position: relative;
+        padding: 14px 0 14px 44px;
+        border-top: 1px solid var(--line);
+      }
+      ol.steps li:last-child {
+        border-bottom: 1px solid var(--line);
+      }
+      ol.steps li::before {
+        content: counter(step, decimal-leading-zero);
+        position: absolute;
+        left: 0;
+        top: 16px;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      ol.steps b {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .faq {
+        border-top: 1px solid var(--line);
+      }
+      .faq h3 {
+        margin: 22px 0 8px;
+        font-size: 1rem;
+        color: var(--ink);
+      }
+      footer {
+        margin-top: 56px;
+        padding-top: 24px;
+        border-top: 1px solid var(--line);
+        font-size: 14px;
+        color: var(--muted);
+      }
+      /* The two hands are the app's only real colour, and this is the only
+         place on the page that borrows it. */
+      .hands b:first-child {
+        color: var(--left-hand);
+      }
+      .hands b:last-child {
+        color: var(--right-hand);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <a class="home" href="/">← pianoify</a>
+
+      <h1>How pianoify works</h1>
+      <p class="lede">
+        Drop in a recording and hear it back as piano. Free, no account, and most of it happens in
+        the browser tab rather than on a server.
+      </p>
+
+      <h2>The short version</h2>
+      <ol class="steps">
+        <li>
+          <b>You give it audio.</b> An MP3, a WAV, an M4A, a FLAC, a voice memo off your phone, or a
+          YouTube link. Files up to ten minutes.
+        </li>
+        <li>
+          <b>It decodes in your tab.</b> The Web Audio API reads the file where it already is, and
+          draws it as a waveform. Nothing has been uploaded at this point.
+        </li>
+        <li>
+          <b>You pick ten seconds.</b> A fixed window slides over the waveform, and a play button
+          previews exactly what will be sent. Under ten seconds and the whole file goes.
+        </li>
+        <li>
+          <b>A transcriber listens.</b> Those ten seconds — and only those — go to a model that
+          returns notes: pitch, when each one starts, how long it lasts, how hard it was struck.
+        </li>
+        <li>
+          <b>The piano roll fills in.</b> Notes are drawn as they arrive, while the model is still
+          decoding the rest, so you watch the transcription land rather than wait for it.
+        </li>
+        <li>
+          <b>It plays.</b> On a sampled Steinway grand with a working damper pedal, and you can
+          crossfade against the original recording to hear how close it got.
+        </li>
+        <li>
+          <b>It engraves.</b> The same transcription is set as sheet music on screen, and exports as
+          MusicXML or MIDI.
+        </li>
+      </ol>
+
+      <h2>What you get out</h2>
+      <ul>
+        <li><b>MIDI</b> — notes with velocities, straight into a DAW or a notation editor.</li>
+        <li>
+          <b>MusicXML</b> — opens in MuseScore, Sibelius, Finale or Dorico. Both exports are the
+          transcriber's own files, not this app's re-derivation of them.
+        </li>
+        <li><b>Chords</b> — recognised and named underneath the notes as it plays.</li>
+      </ul>
+      <p class="hands">
+        The roll is coloured by hand, <b>left</b> and <b>right</b>, so you can see the two parts
+        move against each other as it plays.
+      </p>
+
+      <h2>What it is good at, and what it is not</h2>
+      <p>
+        Solo piano is the case it was built for and it comes back close to right. A full mix is
+        harder, and the honest way to describe the result is that the model hears the loudest thing
+        best: a vocal line or a lead instrument survives, and the parts underneath get approximated
+        rather than transcribed. That is often still useful — it is a sketch of the harmony you can
+        correct in a notation editor — but it is a sketch.
+      </p>
+      <p>
+        Ten seconds is a real limit, not a trial. One pass costs time on a GPU, and the window is
+        the part of the design that keeps this free. Which ten seconds is yours to choose, which is
+        usually the part that matters.
+      </p>
+
+      <h2>Privacy, plainly</h2>
+      <p>
+        Decoding, the waveform, the crop and the preview all run in your browser. The only audio
+        that leaves your machine is the ten-second clip you selected, sent to the transcriber to be
+        transcribed. There is no account, and nothing to sign up for.
+      </p>
+
+      <h2>Questions</h2>
+      <div class="faq">
+        <h3>Is it really free?</h3>
+        <p>
+          To use, yes — no account, no card. There are two transcribers behind the picker. The one
+          it opens on is a GPU box rented by the hour, so a clip on it costs nothing extra. The
+          other is a hosted API that spends credits, on an account that is not yours.
+        </p>
+
+        <h3>Do I need to install anything?</h3>
+        <p>
+          No. It needs a browser with JavaScript and the Web Audio API, which is every current
+          browser on desktop and phone.
+        </p>
+
+        <h3>Can I transcribe from YouTube?</h3>
+        <p>
+          Paste the link and it fetches the audio. A direct link to an audio file works the same
+          way. Transcribe what you have the right to transcribe.
+        </p>
+
+        <h3>Why does the sheet music sometimes take a few seconds longer than the notes?</h3>
+        <p>
+          Because on the GPU box it is a second pass: the notes stream back first and start playing,
+          and MuseScore engraves them afterwards. The tab opens on that wait rather than staying
+          shut, because the wait is the honest state. On the hosted API the notation comes back with
+          the notes and there is nothing to wait for.
+        </p>
+
+        <h3>Which model does the transcribing?</h3>
+        <p>
+          There are two backends — a hosted audio-to-MIDI API and a self-hosted GPU box — and three
+          entries in the picker, because the hosted one can report note times as played or snapped
+          to a beat grid. You choose before you transcribe. They are named in the picker and
+          described in the <a href="https://github.com/jerryzhou196/pianoify">README on GitHub</a>.
+        </p>
+      </div>
+
+      <h2>Try it</h2>
+      <p>Ten seconds of anything is enough to see whether it works on your material.</p>
+      <a class="cta" href="/">Open pianoify →</a>
+
+      <footer>
+        <a href="/">pianoify</a> · <a href="https://github.com/jerryzhou196/pianoify">source</a>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -25,6 +25,10 @@
   ],
   "rewrites": [
     {
+      "source": "/about",
+      "destination": "/about.html"
+    },
+    {
       "source": "/ytdlp/:path*",
       "destination": "https://jerryzhou.ca/ytdlp/:path*"
     },

@@ -1,13 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- A sitemap for a single-page app is one line of it. It is here anyway:
-     without one, `www` and the apex and every preview URL are equally
-     plausible candidates for the canonical, and this settles it in the one
-     place Search Console reads first. -->
+<!-- Two URLs: the app, and the page that explains it. The second one matters
+     more here than the count suggests — the app is a client-side render with
+     almost no text in it, so `/about` is the only document on this origin a
+     crawler can read without executing anything, and the sitemap is how a
+     crawler that never runs the app's JavaScript finds out it exists at all.
+
+     The list is also what settles the canonical: without it, `www` and the
+     apex and every preview URL are equally plausible candidates, and this is
+     the one place Search Console reads first. -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://www.pianoify.net/</loc>
-    <lastmod>2026-08-21</lastmod>
+    <lastmod>2026-08-22</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://www.pianoify.net/about</loc>
+    <lastmod>2026-08-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
 </urlset>

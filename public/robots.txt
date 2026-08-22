@@ -1,4 +1,4 @@
-# One page, and it wants to be found.
+# Two pages, and they want to be found.
 User-agent: *
 Allow: /
 
