@@ -885,6 +885,31 @@ input::placeholder {
   color: #ff8f8f;
 }
 
+/* One line under the drop zone, and the only way out of the app to the page
+   that explains it. It is up before a file is chosen and gone after, because
+   once there is a waveform to trim the question it answers has been answered
+   by doing. */
+.modal-about {
+  margin: 14px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  color: var(--fainter);
+}
+
+.modal-about a {
+  color: var(--muted);
+  text-underline-offset: 3px;
+  /* Three short words that mean one thing; broken across a line they read as
+     the end of the sentence before them. */
+  white-space: nowrap;
+}
+
+.modal-about a:hover {
+  color: var(--ink-soft);
+}
+
 .trim {
   margin-top: 20px;
   padding-top: 18px;

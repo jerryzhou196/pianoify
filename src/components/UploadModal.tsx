@@ -344,6 +344,20 @@ export function UploadModal({
 
         {error && <div className="modal-error">{error}</div>}
 
+        {/* The one link off this screen, and the only place the app says out
+            loud what it is about to do with the file. In a new tab because by
+            the time this modal is reopened there is usually a transcription
+            behind the scrim worth not navigating away from. */}
+        {!source && (
+          <p className="modal-about">
+            Decoded in this tab, cropped to ten seconds, transcribed, then played on a sampled
+            grand.{" "}
+            <a href="/about" target="_blank">
+              How it works
+            </a>
+          </p>
+        )}
+
         {source && window_ && (
           <>
             <div className="trim">
