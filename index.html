@@ -119,6 +119,70 @@
         margin: 0;
         padding-left: 1.1rem;
       }
+      /* The bar meter the app already runs while a transcription is in flight,
+         inlined here so the wait before the bundle mounts is drawn in the app's
+         own vocabulary rather than in a borrowed circle. Each bar starts a beat
+         after the one to its left, which reads as a wave travelling across the
+         row instead of ten things blinking together. */
+      .boot-meter {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        height: 34px;
+        margin: 4px 0;
+      }
+      .boot-meter i {
+        width: 4px;
+        height: 100%;
+        background: #cfcfcf;
+        transform-origin: bottom;
+        animation: boot-bar 0.85s ease-in-out infinite alternate;
+      }
+      .boot-meter i:nth-child(2) {
+        animation-delay: 0.08s;
+      }
+      .boot-meter i:nth-child(3) {
+        animation-delay: 0.16s;
+      }
+      .boot-meter i:nth-child(4) {
+        animation-delay: 0.24s;
+      }
+      .boot-meter i:nth-child(5) {
+        animation-delay: 0.32s;
+      }
+      .boot-meter i:nth-child(6) {
+        animation-delay: 0.4s;
+      }
+      .boot-meter i:nth-child(7) {
+        animation-delay: 0.48s;
+      }
+      .boot-meter i:nth-child(8) {
+        animation-delay: 0.56s;
+      }
+      .boot-meter i:nth-child(9) {
+        animation-delay: 0.64s;
+      }
+      .boot-meter i:nth-child(10) {
+        animation-delay: 0.72s;
+      }
+      @keyframes boot-bar {
+        from {
+          transform: scaleY(0.18);
+          opacity: 0.4;
+        }
+        to {
+          transform: scaleY(1);
+          opacity: 1;
+        }
+      }
+      /* Frozen rather than hidden: a still row of bars is a legible object, so
+         the space the meter holds does not collapse when it stops moving. */
+      @media (prefers-reduced-motion: reduce) {
+        .boot-meter i {
+          animation: none;
+          transform: scaleY(0.55);
+        }
+      }
     </style>
   </head>
   <body>
@@ -135,13 +199,23 @@
       <main class="boot">
         <h1>pianoify</h1>
         <p>Drop in a recording, hear it back as piano.</p>
-        <p>
-          Drop an audio file or paste a YouTube link. It is decoded in the tab, drawn as a waveform,
-          and cropped to ten seconds. That clip goes to a transcriber, which sends back the notes —
-          and the piano roll fills in while the model is still decoding, plays on a sampled Steinway
-          grand with a working damper pedal, engraves the transcription as sheet music, and
-          crossfades against the original recording.
-        </p>
+        <!-- The paragraph that stood here narrated the whole pipeline to someone
+             who was seconds away from watching it run. A meter that is visibly
+             moving says the only thing true at this moment, and says it without
+             asking to be read. What a crawler needs is still on the page: the
+             tagline above, the list below, and the description in <head>. -->
+        <div class="boot-meter" role="status" aria-label="Loading pianoify">
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+          <i></i>
+        </div>
         <ul>
           <li>Audio to MIDI, free, in the browser</li>
           <li>Sheet music you can export as MusicXML</li>
