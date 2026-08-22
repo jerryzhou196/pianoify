@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import { Keyboard } from "./components/Keyboard";
 import { Roll } from "./components/Roll";
 import { Sheet } from "./components/Sheet";
@@ -498,6 +499,7 @@ export default function App() {
         />
       )}
 
+      <Analytics />
     </div>
   );
 }
