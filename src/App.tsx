@@ -12,6 +12,7 @@ import { cropBuffer, cropSeconds, cropToWav, type Crop, type Source } from "./au
 import { analyzeChords, chordAt, warmChordService } from "./chords";
 import { Engine } from "./engine";
 import { assignFingers, assignHands } from "./hands";
+import { useAuth, userLabel } from "./auth";
 import { transcribe as transcribeWithMirelo } from "./mirelo";
 import {
   DEFAULT_MODEL,
@@ -28,6 +29,7 @@ type Phase = "idle" | "working" | "ready" | "error";
 
 export default function App() {
   const engine = useEngine();
+  const auth = useAuth();
 
   const [notes, setNotes] = useState<Note[]>(residentArrangement);
   const [chords, setChords] = useState<Chord[]>([]);
@@ -300,6 +302,7 @@ export default function App() {
                 picked.timing ?? "performance",
                 handlers,
                 controller.signal,
+                auth.session?.access_token,
               );
         if (stale()) return;
 
@@ -366,7 +369,7 @@ export default function App() {
         );
       }
     },
-    [engine, model],
+    [auth.session?.access_token, engine, model],
   );
 
   const cancel = useCallback(() => {
@@ -428,6 +431,8 @@ export default function App() {
         midiUrl={midiUrl}
         musicxmlUrl={musicxmlUrl}
         engraving={engraving}
+        accountLabel={auth.user ? userLabel(auth.user) : null}
+        onSignOut={() => void auth.signOut()}
       />
 
       {/* On a phone the roll and the keyboard share one horizontal scroller,
@@ -496,6 +501,7 @@ export default function App() {
           onStart={(source, crop) => void start(source, crop)}
           model={model}
           onModel={setModel}
+          auth={auth}
         />
       )}
 

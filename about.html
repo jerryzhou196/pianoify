@@ -13,7 +13,7 @@
     <title>How pianoify works — audio to piano MIDI in the browser</title>
     <meta
       name="description"
-      content="How pianoify turns a recording into piano: the file is decoded in your browser, cropped to ten seconds, transcribed to MIDI, then played on a sampled grand and engraved as sheet music."
+      content="How pianoify turns a recording into piano: choose a ten-second guest clip or sign in for more, transcribe it to MIDI, then hear it on a sampled grand."
     />
     <link rel="canonical" href="https://www.pianoify.net/about" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
@@ -25,7 +25,7 @@
     <meta property="og:title" content="How pianoify works" />
     <meta
       property="og:description"
-      content="The file is decoded in your browser, cropped to ten seconds, transcribed to MIDI, then played on a sampled grand and engraved as sheet music."
+      content="Choose a ten-second guest clip or sign in for more, transcribe it to MIDI, then hear it on a sampled grand and see the sheet music."
     />
     <meta property="og:image" content="https://www.pianoify.net/og.png" />
     <meta property="og:image:width" content="1200" />
@@ -45,15 +45,15 @@
             "name": "Is pianoify free?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Free to use, with no account and no card. One of the two transcribers spends credits, but on an account that is not yours; the one the picker opens on is a GPU box rented by the hour, which costs nothing per clip."
+              "text": "A ten-second guest transcription needs no account or card. A free Google or GitHub sign-in unlocks longer selections. One transcriber spends credits on an account that is not yours; the default GPU box costs nothing per clip."
             }
           },
           {
             "@type": "Question",
-            "name": "Why only ten seconds?",
+            "name": "Can I transcribe more than ten seconds?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Ten seconds is what one pass on the transcriber costs in time and GPU. You choose which ten seconds by sliding a window over the waveform, and the file itself can be up to ten minutes long."
+              "text": "Yes. The selection opens at ten seconds for guests. Sign in with Google or GitHub to resize it up to ten minutes on Mirelo or the end of the source on the GPU box."
             }
           },
           {
@@ -61,7 +61,7 @@
             "name": "Does my audio get uploaded?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Only the ten seconds you selected. Decoding, the waveform and the crop all happen in the browser tab, so the rest of the file never leaves your machine."
+              "text": "Only the selection you chose. Decoding, the waveform and the crop all happen in the browser tab, so the rest of the file never leaves your machine."
             }
           },
           {
@@ -271,8 +271,8 @@
 
       <h1>How pianoify works</h1>
       <p class="lede">
-        Drop in a recording and hear it back as piano. Free, no account, and most of it happens in
-        the browser tab rather than on a server.
+        Drop in a recording and hear it back as piano. Try ten seconds without an account, or sign
+        in free for a longer selection; most of it happens in the browser tab rather than on a server.
       </p>
 
       <h2>The short version</h2>
@@ -286,12 +286,13 @@
           draws it as a waveform. Nothing has been uploaded at this point.
         </li>
         <li>
-          <b>You pick ten seconds.</b> A fixed window slides over the waveform, and a play button
-          previews exactly what will be sent. Under ten seconds and the whole file goes.
+          <b>You pick the passage.</b> The window opens ten seconds wide. A guest can move it; a
+          signed-in user can also stretch its edges to the model's full limit. The play button
+          previews exactly what will be sent.
         </li>
         <li>
-          <b>A transcriber listens.</b> Those ten seconds — and only those — go to a model that
-          returns notes: pitch, when each one starts, how long it lasts, how hard it was struck.
+          <b>A transcriber listens.</b> That selection — and only that selection — goes to a model
+          that returns notes: pitch, when each one starts, how long it lasts, how hard it was struck.
         </li>
         <li>
           <b>The piano roll fills in.</b> Notes are drawn as they arrive, while the model is still
@@ -330,25 +331,27 @@
         correct in a notation editor — but it is a sketch.
       </p>
       <p>
-        Ten seconds is a real limit, not a trial. One pass costs time on a GPU, and the window is
-        the part of the design that keeps this free. Which ten seconds is yours to choose, which is
-        usually the part that matters.
+        Ten seconds is the account-free allowance, not the model's ceiling. Sign in with Google or
+        GitHub and the same window becomes resizable: up to ten minutes on Mirelo, or to the end of
+        the source on the GPU box.
       </p>
 
       <h2>Privacy, plainly</h2>
       <p>
         Decoding, the waveform, the crop and the preview all run in your browser. The only audio
-        that leaves your machine is the ten-second clip you selected, sent to the transcriber to be
-        transcribed. There is no account, and nothing to sign up for.
+        that leaves your machine is the clip you selected, sent to the transcriber to be transcribed.
+        If you sign in, Supabase stores the account session; Pianoify never asks Google or GitHub for
+        access to your files or repositories.
       </p>
 
       <h2>Questions</h2>
       <div class="faq">
         <h3>Is it really free?</h3>
         <p>
-          To use, yes — no account, no card. There are two transcribers behind the picker. The one
-          it opens on is a GPU box rented by the hour, so a clip on it costs nothing extra. The
-          other is a hosted API that spends credits, on an account that is not yours.
+          Yes — no card. Ten seconds works without an account; a free Google or GitHub sign-in
+          unlocks longer selections. There are two transcribers behind the picker. The default GPU
+          box is rented by the hour, so a clip on it costs nothing extra. The other is a hosted API
+          that spends credits, on an account that is not yours.
         </p>
 
         <h3>Do I need to install anything?</h3>
@@ -381,7 +384,7 @@
       </div>
 
       <h2>Try it</h2>
-      <p>Ten seconds of anything is enough to see whether it works on your material.</p>
+      <p>Try ten seconds as a guest, then sign in if the rest of the performance is worth hearing.</p>
       <a class="cta" href="/">Open pianoify →</a>
 
       <footer>
