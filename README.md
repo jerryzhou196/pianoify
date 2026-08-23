@@ -1,48 +1,5 @@
 # pianoify
 
-Drop in a recording, hear it back as piano.
-
-Drop a file or paste a YouTube link. It is decoded in the tab, drawn as a
-waveform, and cropped to ten seconds — opening on the first thing you actually
-played. That crop goes to one of two transcribers — [Mirelo](https://mirelo.ai)'s
-audio-to-MIDI API, or a rented GPU box running
-[MuScriptor](https://github.com/jerryzhou196/muscriptor), whichever the model
-picker in the header names — conditioned on `acoustic_piano`, which sends back
-the notes; the chords come from a CPU-only Hugging Face Space running BTC. The roll fills in while the
-model is still decoding, plays on a sampled Steinway grand with a working damper
-pedal, engraves the transcription's MusicXML on a second tab, and crossfades
-against the original recording.
-
-## Running it
-
-```sh
-npm install
-npm run dev      # http://localhost:5173
-```
-
-`MIRELO_KEY` has to be in the environment the dev server starts in — it is
-already in `~/.zshrc`, so a normal shell has it; a `.env.local` works too. The
-key is only ever read by the functions in `api/`, which the dev server mounts
-itself (see `vite.config.ts`), so `npm run dev` needs no `vercel dev` and no
-tunnel.
-
-## Deploying it
-
-A static Vite build plus four Node functions. `vercel.json` has the rest.
-
-1. Set **`MIRELO_KEY`** in the project's environment variables. Not `VITE_`
-   prefixed — `VITE_*` is inlined into a bundle any visitor can read.
-2. Optionally set `VITE_CHORD_API_BASE` (see `.env.example`). It is inlined at
-   build time, so changing it takes a redeploy, not just a settings save.
-3. Add the deployed origin to the chord Space's `ALLOWED_ORIGINS`, or the
-   chord request fails at the preflight. The yt-dlp service and the GPU box
-   need no such change — `vercel.json` rewrites `/ytdlp/*` and `/gpu/*` to
-   them, so the browser only ever talks to this origin. That is what lets the
-   GPU model work from a preview deployment, whose URL is different every time
-   and could never be on an allowlist ahead of it.
-
-## How it works
-
 ```
 audio file, or a youtube link
    ↓  /ytdlp/download   (youtube only) the self-hosted yt-dlp service, reached
