@@ -24,6 +24,8 @@ export function TopBar({
   midiUrl,
   musicxmlUrl,
   engraving,
+  accountLabel,
+  onSignOut,
 }: {
   model: ModelId;
   onModel: (model: ModelId) => void;
@@ -36,6 +38,8 @@ export function TopBar({
   /** Where the MusicXML is, when it is written after the notes rather than
    *  with them. See `engraving` in `App.tsx`. */
   engraving: "idle" | "running" | "failed";
+  accountLabel: string | null;
+  onSignOut: () => void;
 }) {
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -114,6 +118,16 @@ export function TopBar({
         <button className="ghost" onClick={onReplace}>
           {fileName ? "Replace" : "Open"}
         </button>
+        {accountLabel && (
+          <>
+            <span className="account-name" title={`Signed in as ${accountLabel}`}>
+              {accountLabel}
+            </span>
+            <button className="ghost" onClick={onSignOut}>
+              Sign out
+            </button>
+          </>
+        )}
       </div>
 
       <button

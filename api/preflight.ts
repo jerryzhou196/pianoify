@@ -7,9 +7,11 @@
  * of the crop actually selected rather than of the whole file.
  */
 import { MAX_CLIP_SECONDS, json, mirelo, query, route, throttle } from "./_mirelo.js";
+import { GUEST_CLIP_SECONDS, requireUser } from "./_auth.js";
 
-/** The same cap the upload enforces. Quoting a price for a clip that could
- *  never be sent would be quoting a lie. */
+/** The same cap the upload enforces — and, at ten minutes, the same one Mirelo
+ *  enforces on this very endpoint. Sending it a duration it is going to refuse
+ *  would turn a quote into an error message. */
 const MAX_MS = MAX_CLIP_SECONDS * 1000;
 
 export default route({
@@ -20,10 +22,11 @@ export default route({
     const ms = Math.round(Number(query(req).get("duration_ms")));
     if (!Number.isFinite(ms) || ms <= 0 || ms > MAX_MS) {
       json(res, 400, {
-        error: `duration_ms must be between 1 and ${MAX_MS} — this app transcribes at most ${MAX_CLIP_SECONDS}s at a time`,
+        error: `duration_ms must be between 1 and ${MAX_MS} — mirelo transcribes at most ${MAX_CLIP_SECONDS / 60} minutes at a time`,
       });
       return;
     }
+    if (ms > GUEST_CLIP_SECONDS * 1000) await requireUser(req);
     const quote = await mirelo(`/v2/audio-to-midi/v1.0/preflight?duration_ms=${ms}`);
     json(res, 200, {
       credits: quote.credits ?? null,
